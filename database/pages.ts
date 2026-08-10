@@ -18,3 +18,15 @@ export async function findDuplicates(pages: Pick<Page, "url">[]): Promise<Set<st
   const existing = await db.pages.where("url").anyOf(urls).toArray();
   return new Set(existing.map((p) => p.url));
 }
+
+export async function listAllPages(): Promise<Page[]> {
+  return db.pages.toArray();
+}
+
+export async function listUnprocessedPages(): Promise<Page[]> {
+  return db.pages.filter((p) => p.embedding === undefined).toArray();
+}
+
+export async function updatePage(id: number, changes: Partial<Omit<Page, "id">>): Promise<void> {
+  await db.pages.update(id, changes);
+}
