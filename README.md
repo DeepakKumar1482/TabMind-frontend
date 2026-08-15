@@ -83,29 +83,30 @@ Then load `dist-extension/` as an unpacked extension in `chrome://extensions` (D
 - Dashboard (`chrome-extension://<id>/dashboard/index.html`) lists sessions, expands to page list, **Restore All** reopens every page in the session.
 - Next.js dashboard runs with `basePath: "/dashboard"` + `output: "export"` so its static assets resolve correctly when nested inside the extension package.
 
-## Phase 2 — Local AI (summarization, embeddings, semantic search, auto-tags)
+## Phase 2 — AI (embeddings local, summarization/tags via Gemini)
 
-All AI runs on-device via [Transformers.js](https://github.com/xenova/transformers.js) (`@xenova/transformers`), **only inside the dashboard tab** (`chrome-extension://<id>/dashboard/index.html`) — never in the background service worker, since model loading needs a full window/WASM-friendly context and is too heavy to run on every capture. The extension's capture flow (Phase 1) stays untouched: it stores raw `title`/`content`/`url` only, fast.
+Runs **only inside the dashboard tab** (`chrome-extension://<id>/dashboard/index.html`) — never in the background service worker. The extension's capture flow (Phase 1) stays untouched: it stores raw `title`/`content`/`url` only, fast.
 
-Models (fetched from the HF CDN on first use, cached by the browser after):
-
-| Task | Model | Used for |
+| Task | Where | How |
 |---|---|---|
-| Feature extraction | `Xenova/all-MiniLM-L6-v2` | 384-dim sentence embeddings — semantic search, similarity |
-| Summarization | `Xenova/distilbart-cnn-6-6` | 1–2 sentence page summary |
-| Zero-shot classification | `Xenova/nli-deberta-v3-xsmall` | auto-tags from a fixed candidate label set (`ai/autotag.ts`) |
+| Embeddings (semantic search) | On-device | [Transformers.js](https://github.com/xenova/transformers.js), `Xenova/all-MiniLM-L6-v2` — 384-dim, fetched from HF CDN once, cached by browser, never leaves the machine (`ai/embeddings.ts`) |
+| Summarization + auto-tags | Backend proxy | `ai/gemini.ts` → `POST {NEXT_PUBLIC_BACKEND_URL}/api/ai/process` → backend calls Gemini (`gemini-2.5-flash`). Page title/content is sent off-device for this step — see privacy note below. |
 
 Flow:
 
-1. On dashboard load, `runBackgroundProcessing()` (`src/app/page.tsx`) finds every `Page` without an `embedding` (`listUnprocessedPages()` in `database/pages.ts`) and processes them one at a time via `ai/process.ts` → `processPage()`, writing `summary` / `embedding` / `tags` back to Dexie (`updatePage()`). UI shows a small progress indicator while this runs; first load is slower (model download), subsequent loads are fast (cached models, only new pages processed).
-2. Semantic search bar embeds the query (`ai/embeddings.ts`) and ranks all pages by cosine similarity against their stored embeddings (`ai/search.ts` → `semanticSearch()`), threshold 0.2, above-threshold results sorted descending.
+1. On dashboard load, `runBackgroundProcessing()` (`src/app/page.tsx`) finds every `Page` without an `embedding` (`listUnprocessedPages()` in `database/pages.ts`) and processes them one at a time via `ai/process.ts` → `processPage()`: embedding computed locally, summary+tags fetched from the backend, both written back to Dexie (`updatePage()`). UI shows a small progress indicator while this runs.
+2. Semantic search bar embeds the query locally (`ai/embeddings.ts`) and ranks all pages by cosine similarity against their stored embeddings (`ai/search.ts` → `semanticSearch()`), threshold 0.2, above-threshold results sorted descending. Fully local — no network call.
 3. Auto-tags and summaries render inline on both search results and the session page list.
 
-**Known issue (unresolved, tracked, not blocking):** `@xenova/transformers` currently reports 4 high + 1 critical `npm audit` findings (via `protobufjs` / `sharp` in the `onnxruntime-web` dependency chain). Considered switching to `@huggingface/transformers` (the actively maintained successor) — not yet done. Revisit before Phase 5 (production hardening).
+**Requires the backend running locally** (`../backend`, `./mvnw spring-boot:run`) with `GEMINI_API_KEY` set in `backend/.env` — see backend README's Phase 2 section. If the backend is down/unset, embeddings + search still work; summary/tags just fail silently per-page (logged to console, doesn't block other pages).
+
+**Privacy note:** this is a deliberate departure from "fully local-first" for summarization/tags — captured page content is sent to Google's Gemini API via the backend for that step. Embeddings/semantic search remain 100% on-device. The Gemini API key lives only in `backend/.env` (gitignored, never committed) and is never present in this frontend's bundle/client code — the extension can be fully unpacked/inspected by anyone and the key won't be in it, since the browser never talks to Gemini directly, only to the backend proxy.
+
+**Known issue (unresolved, tracked, not blocking):** `@xenova/transformers` currently reports 4 high + 1 critical `npm audit` findings (via `protobufjs` / `sharp` in the `onnxruntime-web` dependency chain). Still used here for the embedding model only (smaller surface than before, now that summarization/classification models were dropped). Considered switching to `@huggingface/transformers` — not yet done. Revisit before Phase 5 (production hardening).
 
 ## Status
 
 **Phase 1 (Tab Capture / IndexedDB / Dashboard / Restore)** — done, building clean.
-**Phase 2 (Local AI: summarization, embeddings, semantic search, auto-tags)** — done, building clean. Runs entirely client-side in the dashboard, on-device.
+**Phase 2 (AI: local embeddings + semantic search, Gemini-backed summarization/auto-tags)** — done, building clean. Requires backend running for summary/tags.
 
 Not yet done: workspace picker UI, duplicate/cleanup UI, research mode, knowledge graph, real icons (placeholders are solid-color PNGs), Vitest/Playwright tests, `@xenova/transformers` audit findings above. See root project doc for full feature list and phased build order (Phase 1–5).
