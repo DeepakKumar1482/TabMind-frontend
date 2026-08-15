@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "build:extension": "vite build --config vite.extension.config.ts",
-    "build:dashboard": "next build",
+    "build:dashboard": "next build --webpack",
     "build:all": "npm run build:dashboard && npm run build:extension && node scripts/copy-dashboard.mjs"
   },
   "dependencies": {
