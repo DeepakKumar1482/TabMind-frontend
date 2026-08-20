@@ -25,21 +25,23 @@ async function extractTabContent(tabId: number): Promise<string> {
 }
 
 // Shared by panicCapture() (closes tabs after) and saveCurrentSession()
-// (leaves them open) — both just write a Session + Page[] from the current
-// window's tabs.
-async function captureCurrentWindow(sessionName: string): Promise<{
+// (leaves them open) — both capture every browser window, not just the
+// current one, tagging each page with a logical windowIndex (0-based,
+// first-seen order) so a restore can recreate the same window grouping.
+async function captureAllWindows(sessionName: string): Promise<{
   sessionId: number;
   captured: number;
   skippedProtected: number;
   capturedTabIds: number[];
 }> {
   const patterns = await getProtectedPatterns();
-  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const tabs = await chrome.tabs.query({});
 
   const capturable = tabs.filter(
-    (tab): tab is chrome.tabs.Tab & { id: number; url: string } =>
+    (tab): tab is chrome.tabs.Tab & { id: number; url: string; windowId: number } =>
       typeof tab.id === "number" &&
       typeof tab.url === "string" &&
+      typeof tab.windowId === "number" &&
       /^https?:\/\//.test(tab.url) &&
       !isProtectedUrl(tab.url, patterns)
   );
@@ -47,12 +49,18 @@ async function captureCurrentWindow(sessionName: string): Promise<{
 
   const existingUrls = await findDuplicates(capturable.map((t) => ({ url: t.url })));
 
+  const windowIndexByRealId = new Map<number, number>();
+  for (const tab of capturable) {
+    if (!windowIndexByRealId.has(tab.windowId)) windowIndexByRealId.set(tab.windowId, windowIndexByRealId.size);
+  }
+
   const workspaceId = await getOrCreateDefaultWorkspace();
   const sessionId = await createSession({
     workspaceId,
     name: sessionName,
     createdAt: Date.now(),
     tabCount: capturable.length,
+    windowCount: windowIndexByRealId.size,
   });
 
   const pages: Omit<Page, "id">[] = [];
@@ -68,6 +76,7 @@ async function captureCurrentWindow(sessionName: string): Promise<{
       tags: [],
       readStatus: "unread",
       capturedAt: Date.now(),
+      windowIndex: windowIndexByRealId.get(tab.windowId),
     });
   }
   await addPages(pages);
@@ -76,7 +85,7 @@ async function captureCurrentWindow(sessionName: string): Promise<{
 }
 
 export async function panicCapture(): Promise<PanicCaptureResult> {
-  const { sessionId, captured, skippedProtected, capturedTabIds } = await captureCurrentWindow(
+  const { sessionId, captured, skippedProtected, capturedTabIds } = await captureAllWindows(
     `Session ${new Date().toLocaleString()}`
   );
 
@@ -93,12 +102,29 @@ export async function panicCapture(): Promise<PanicCaptureResult> {
 // "Save without closing" — same capture, tabs stay open. No dashboard
 // navigation either, since the point is to keep working uninterrupted.
 export async function saveCurrentSession(): Promise<SaveSessionResult> {
-  const { sessionId, captured, skippedProtected } = await captureCurrentWindow(`Saved ${new Date().toLocaleString()}`);
+  const { sessionId, captured, skippedProtected } = await captureAllWindows(`Saved ${new Date().toLocaleString()}`);
   return { sessionId, captured, skippedProtected };
 }
 
 export async function restorePages(urls: string[]): Promise<void> {
   for (const url of urls) {
     await chrome.tabs.create({ url, active: false });
+  }
+}
+
+// Recreates one browser window per distinct windowIndex the session was
+// captured with, each opened with its own tabs in one call. Pages with no
+// windowIndex (older sessions, captured before this feature) all fall into
+// window 0.
+export async function restoreSessionWindows(pages: { url: string; windowIndex?: number }[]): Promise<void> {
+  const byWindow = new Map<number, string[]>();
+  for (const page of pages) {
+    const idx = page.windowIndex ?? 0;
+    const list = byWindow.get(idx) ?? [];
+    list.push(page.url);
+    byWindow.set(idx, list);
+  }
+  for (const urls of byWindow.values()) {
+    if (urls.length) await chrome.windows.create({ url: urls });
   }
 }

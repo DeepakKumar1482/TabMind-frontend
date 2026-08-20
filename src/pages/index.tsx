@@ -118,7 +118,9 @@ export default function Dashboard() {
                         <p className="text-sm font-medium truncate">{session.name}</p>
                         <p className="text-xs text-zinc-500 mt-0.5">{formatWhen(session.createdAt)}</p>
                       </div>
-                      <span className="text-xs text-zinc-500 font-mono tabular-nums shrink-0">{session.tabCount} tabs</span>
+                      <span className="text-xs text-zinc-500 font-mono tabular-nums shrink-0">
+                        {session.tabCount} tabs{session.windowCount && session.windowCount > 1 ? ` · ${session.windowCount}w` : ""}
+                      </span>
                       <button
                         onClick={() => session.id && s.restoreSession(session.id)}
                         className="text-xs px-3 py-1.5 rounded-lg bg-violet-500 text-white font-medium hover:bg-violet-400 transition-colors shrink-0"

@@ -13,6 +13,7 @@ export interface Session {
   name: string;
   createdAt: number;
   tabCount: number;
+  windowCount?: number;
   lastOpenedAt?: number;
   deletedAt?: number;
 }
@@ -29,6 +30,7 @@ export interface Page {
   group?: string;
   pinned?: boolean;
   deletedAt?: number;
+  windowIndex?: number;
   embedding?: number[];
   readStatus: ReadStatus;
   note?: string;
