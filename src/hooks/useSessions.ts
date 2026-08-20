@@ -210,6 +210,16 @@ export function useSessions() {
     setSessions((prev) => prev.map((s) => (s.id === page.sessionId ? { ...s, tabCount: newTabCount } : s)));
   }
 
+  async function handleTogglePin(page: Page) {
+    const pinned = !page.pinned;
+    await updatePage(page.id, { pinned });
+    setPagesBySession((prev) => {
+      const existing = prev[page.sessionId];
+      if (!existing) return prev;
+      return { ...prev, [page.sessionId]: existing.map((p) => (p.id === page.id ? { ...p, pinned } : p)) };
+    });
+  }
+
   async function handleSetPageGroup(page: Page, group: string | undefined) {
     await updatePage(page.id, { group });
     setPagesBySession((prev) => {
@@ -259,5 +269,6 @@ export function useSessions() {
     handleDeleteSession,
     handleDeletePage,
     handleSetPageGroup,
+    handleTogglePin,
   };
 }

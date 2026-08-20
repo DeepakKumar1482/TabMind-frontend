@@ -16,6 +16,7 @@ export function WorkspaceSection({
   onDeleteSession,
   onDeletePage,
   onSetPageGroup,
+  onTogglePin,
   selectedPageIds,
   onToggleSelectPage,
   onSelectAllPages,
@@ -35,6 +36,7 @@ export function WorkspaceSection({
   onDeleteSession: (session: Session) => void;
   onDeletePage: (page: Page) => void;
   onSetPageGroup: (page: Page, group: string | undefined) => void;
+  onTogglePin: (page: Page) => void;
   selectedPageIds: Set<number>;
   onToggleSelectPage: (pageId: number) => void;
   onSelectAllPages: (pageIds: number[]) => void;
@@ -76,6 +78,7 @@ export function WorkspaceSection({
               onDeleteSession={onDeleteSession}
               onDeletePage={onDeletePage}
               onSetPageGroup={onSetPageGroup}
+              onTogglePin={onTogglePin}
               selectedPageIds={selectedPageIds}
               onToggleSelectPage={onToggleSelectPage}
               onSelectAllPages={onSelectAllPages}
@@ -100,6 +103,7 @@ export function SessionCard({
   onDeleteSession,
   onDeletePage,
   onSetPageGroup,
+  onTogglePin,
   selectedPageIds,
   onToggleSelectPage,
   onSelectAllPages,
@@ -116,6 +120,7 @@ export function SessionCard({
   onDeleteSession: (session: Session) => void;
   onDeletePage: (page: Page) => void;
   onSetPageGroup: (page: Page, group: string | undefined) => void;
+  onTogglePin: (page: Page) => void;
   selectedPageIds: Set<number>;
   onToggleSelectPage: (pageId: number) => void;
   onSelectAllPages: (pageIds: number[]) => void;
@@ -126,7 +131,8 @@ export function SessionCard({
   for (const page of pageList) {
     if (page.group && !groupNames.includes(page.group)) groupNames.push(page.group);
   }
-  const ungrouped = pageList.filter((p) => !p.group);
+  const pinnedFirst = (list: Page[]) => [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
+  const ungrouped = pinnedFirst(pageList.filter((p) => !p.group));
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
       <div className="flex items-center justify-between gap-3">
@@ -220,19 +226,18 @@ export function SessionCard({
                   <span aria-hidden>▾</span> {groupName}
                 </p>
                 <ul className="flex flex-col gap-3 pl-1 border-l border-zinc-800 ml-1">
-                  {pageList
-                    .filter((p) => p.group === groupName)
-                    .map((page) => (
-                      <PageRow
-                        key={page.id}
-                        page={page}
-                        groupNames={groupNames}
-                        selected={selectedPageIds.has(page.id)}
-                        onToggleSelect={onToggleSelectPage}
-                        onDelete={onDeletePage}
-                        onSetGroup={onSetPageGroup}
-                      />
-                    ))}
+                  {pinnedFirst(pageList.filter((p) => p.group === groupName)).map((page) => (
+                    <PageRow
+                      key={page.id}
+                      page={page}
+                      groupNames={groupNames}
+                      selected={selectedPageIds.has(page.id)}
+                      onToggleSelect={onToggleSelectPage}
+                      onDelete={onDeletePage}
+                      onSetGroup={onSetPageGroup}
+                      onTogglePin={onTogglePin}
+                    />
+                  ))}
                 </ul>
               </div>
             ))}
@@ -251,6 +256,7 @@ export function SessionCard({
                       onToggleSelect={onToggleSelectPage}
                       onDelete={onDeletePage}
                       onSetGroup={onSetPageGroup}
+                      onTogglePin={onTogglePin}
                     />
                   ))}
                 </ul>
@@ -270,6 +276,7 @@ function PageRow({
   onToggleSelect,
   onDelete,
   onSetGroup,
+  onTogglePin,
 }: {
   page: Page;
   groupNames: string[];
@@ -277,6 +284,7 @@ function PageRow({
   onToggleSelect: (pageId: number) => void;
   onDelete: (page: Page) => void;
   onSetGroup: (page: Page, group: string | undefined) => void;
+  onTogglePin: (page: Page) => void;
 }) {
   function handleGroupChange(value: string) {
     if (value === "__new__") {
@@ -304,7 +312,18 @@ function PageRow({
         {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
         <PageTags tags={page.tags} />
       </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
+      <div
+        className={`flex items-center gap-1 transition-opacity shrink-0 self-start ${
+          page.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        }`}
+      >
+        <button
+          onClick={() => onTogglePin(page)}
+          aria-label={page.pinned ? "Unpin tab" : "Pin tab"}
+          className={`text-xs leading-none ${page.pinned ? "text-amber-400" : "text-zinc-700 hover:text-amber-300"}`}
+        >
+          {page.pinned ? "★" : "☆"}
+        </button>
         <select
           value={page.group ?? "__none__"}
           onChange={(e) => handleGroupChange(e.target.value)}
