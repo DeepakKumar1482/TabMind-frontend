@@ -184,7 +184,7 @@ export function useSessions() {
 
   async function handleDeleteSession(session: Session) {
     if (!session.id) return;
-    const ok = window.confirm(`Delete "${session.name}" and its ${session.tabCount} tabs? This can't be undone.`);
+    const ok = window.confirm(`Move "${session.name}" and its ${session.tabCount} tabs to Trash?`);
     if (!ok) return;
     await deleteSession(session.id);
     setSessions((prev) => prev.filter((s) => s.id !== session.id));
@@ -197,7 +197,7 @@ export function useSessions() {
   }
 
   async function handleDeletePage(page: Page) {
-    const ok = window.confirm(`Remove "${page.title}" from this session?`);
+    const ok = window.confirm(`Move "${page.title}" to Trash?`);
     if (!ok) return;
     const newTabCount = Math.max(0, (sessions.find((s) => s.id === page.sessionId)?.tabCount ?? 1) - 1);
     await deletePage(page.id);

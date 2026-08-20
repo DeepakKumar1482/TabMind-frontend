@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { listWorkspaces } from "../../database/workspaces";
-import { listSessions } from "../../database/sessions";
+import { listSessions, purgeExpiredSessions } from "../../database/sessions";
+import { purgeExpiredPages } from "../../database/pages";
 import { formatBytes } from "../lib/format";
 import type { Workspace, Session } from "../../shared/types";
 
@@ -12,7 +13,10 @@ const NAV = [
   { href: "/recently-closed", label: "Recently Closed", icon: "↺" },
   { href: "/duplicates", label: "Duplicates", icon: "⧉" },
   { href: "/domains", label: "Domains", icon: "◈" },
+  { href: "/trash", label: "Trash", icon: "🗑" },
 ];
+
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -43,6 +47,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     void navigator.storage.estimate().then((est) => {
       if (est.usage !== undefined && est.quota !== undefined) setStorage({ usage: est.usage, quota: est.quota });
     });
+  }, []);
+
+  useEffect(() => {
+    const cutoff = Date.now() - TRASH_RETENTION_MS;
+    void Promise.all([purgeExpiredSessions(cutoff), purgeExpiredPages(cutoff)]);
   }, []);
 
   useEffect(() => {
