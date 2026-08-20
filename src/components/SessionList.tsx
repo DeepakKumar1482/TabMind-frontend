@@ -15,6 +15,7 @@ export function WorkspaceSection({
   onRenameSession,
   onDeleteSession,
   onDeletePage,
+  onSetPageGroup,
   selectedPageIds,
   onToggleSelectPage,
   onSelectAllPages,
@@ -33,6 +34,7 @@ export function WorkspaceSection({
   onRenameSession: (session: Session) => void;
   onDeleteSession: (session: Session) => void;
   onDeletePage: (page: Page) => void;
+  onSetPageGroup: (page: Page, group: string | undefined) => void;
   selectedPageIds: Set<number>;
   onToggleSelectPage: (pageId: number) => void;
   onSelectAllPages: (pageIds: number[]) => void;
@@ -73,6 +75,7 @@ export function WorkspaceSection({
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
               onDeletePage={onDeletePage}
+              onSetPageGroup={onSetPageGroup}
               selectedPageIds={selectedPageIds}
               onToggleSelectPage={onToggleSelectPage}
               onSelectAllPages={onSelectAllPages}
@@ -96,6 +99,7 @@ export function SessionCard({
   onRenameSession,
   onDeleteSession,
   onDeletePage,
+  onSetPageGroup,
   selectedPageIds,
   onToggleSelectPage,
   onSelectAllPages,
@@ -111,11 +115,18 @@ export function SessionCard({
   onRenameSession: (session: Session) => void;
   onDeleteSession: (session: Session) => void;
   onDeletePage: (page: Page) => void;
+  onSetPageGroup: (page: Page, group: string | undefined) => void;
   selectedPageIds: Set<number>;
   onToggleSelectPage: (pageId: number) => void;
   onSelectAllPages: (pageIds: number[]) => void;
   onRestoreSelectedPages: (sessionId: number) => void;
 }) {
+  const pageList = pages ?? [];
+  const groupNames: string[] = [];
+  for (const page of pageList) {
+    if (page.group && !groupNames.includes(page.group)) groupNames.push(page.group);
+  }
+  const ungrouped = pageList.filter((p) => !p.group);
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
       <div className="flex items-center justify-between gap-3">
@@ -202,44 +213,117 @@ export function SessionCard({
               </button>
             )}
           </div>
-          <ul className="flex flex-col gap-3">
-            {(pages ?? []).map((page) => (
-              <li key={page.id} className="flex gap-2.5 group">
-                <input
-                  type="checkbox"
-                  checked={selectedPageIds.has(page.id)}
-                  onChange={() => onToggleSelectPage(page.id)}
-                  className="accent-violet-500 mt-1 shrink-0"
-                />
-                <Favicon url={page.url} size={16} />
-                <div className="min-w-0 flex-1">
-                  <a
-                    href={page.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-zinc-200 hover:underline truncate block"
-                  >
-                    {page.title}
-                  </a>
-                  <p className="text-xs text-zinc-600 truncate">{hostname(page.url)}</p>
-                  {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
-                  <PageTags tags={page.tags} />
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
-                  <CopyUrlButton url={page.url} />
-                  <button
-                    onClick={() => onDeletePage(page)}
-                    aria-label="Remove tab from session"
-                    className="text-xs text-zinc-700 hover:text-rose-400"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </li>
+          <div className="flex flex-col gap-4">
+            {groupNames.map((groupName) => (
+              <div key={groupName}>
+                <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-1.5 flex items-center gap-1.5">
+                  <span aria-hidden>▾</span> {groupName}
+                </p>
+                <ul className="flex flex-col gap-3 pl-1 border-l border-zinc-800 ml-1">
+                  {pageList
+                    .filter((p) => p.group === groupName)
+                    .map((page) => (
+                      <PageRow
+                        key={page.id}
+                        page={page}
+                        groupNames={groupNames}
+                        selected={selectedPageIds.has(page.id)}
+                        onToggleSelect={onToggleSelectPage}
+                        onDelete={onDeletePage}
+                        onSetGroup={onSetPageGroup}
+                      />
+                    ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+            {ungrouped.length > 0 && (
+              <div>
+                {groupNames.length > 0 && (
+                  <p className="text-[11px] uppercase tracking-wide text-zinc-600 mb-1.5">Ungrouped</p>
+                )}
+                <ul className="flex flex-col gap-3">
+                  {ungrouped.map((page) => (
+                    <PageRow
+                      key={page.id}
+                      page={page}
+                      groupNames={groupNames}
+                      selected={selectedPageIds.has(page.id)}
+                      onToggleSelect={onToggleSelectPage}
+                      onDelete={onDeletePage}
+                      onSetGroup={onSetPageGroup}
+                    />
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function PageRow({
+  page,
+  groupNames,
+  selected,
+  onToggleSelect,
+  onDelete,
+  onSetGroup,
+}: {
+  page: Page;
+  groupNames: string[];
+  selected: boolean;
+  onToggleSelect: (pageId: number) => void;
+  onDelete: (page: Page) => void;
+  onSetGroup: (page: Page, group: string | undefined) => void;
+}) {
+  function handleGroupChange(value: string) {
+    if (value === "__new__") {
+      const name = window.prompt("New group name")?.trim();
+      if (name) onSetGroup(page, name);
+      return;
+    }
+    onSetGroup(page, value === "__none__" ? undefined : value);
+  }
+
+  return (
+    <li className="flex gap-2.5 group">
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={() => onToggleSelect(page.id)}
+        className="accent-violet-500 mt-1 shrink-0"
+      />
+      <Favicon url={page.url} size={16} />
+      <div className="min-w-0 flex-1">
+        <a href={page.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-200 hover:underline truncate block">
+          {page.title}
+        </a>
+        <p className="text-xs text-zinc-600 truncate">{hostname(page.url)}</p>
+        {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
+        <PageTags tags={page.tags} />
+      </div>
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
+        <select
+          value={page.group ?? "__none__"}
+          onChange={(e) => handleGroupChange(e.target.value)}
+          aria-label="Assign to group"
+          className="text-[11px] rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-zinc-500 outline-none focus:border-violet-500/60 transition-colors"
+        >
+          <option value="__none__">No group</option>
+          {groupNames.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+          <option value="__new__">+ New group…</option>
+        </select>
+        <CopyUrlButton url={page.url} />
+        <button onClick={() => onDelete(page)} aria-label="Remove tab from session" className="text-xs text-zinc-700 hover:text-rose-400">
+          ✕
+        </button>
+      </div>
+    </li>
   );
 }
