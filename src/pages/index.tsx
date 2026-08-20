@@ -20,10 +20,42 @@ export default function Dashboard() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResult[] | null>(null);
 
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [sessionResults, setSessionResults] = useState<{ session: Session; pages: Page[] }[] | null>(null);
+
   useEffect(() => {
     void loadAll();
     void runBackgroundProcessing();
   }, []);
+
+  // Instant keyword filter across session name / tab title / URL / domain —
+  // separate from the semantic search above, which ranks by meaning.
+  useEffect(() => {
+    const q = sessionQuery.trim().toLowerCase();
+    if (!q) {
+      setSessionResults(null);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      const allPages = await listAllPages();
+      const matchingPagesBySession = new Map<number, Page[]>();
+      for (const page of allPages) {
+        const haystack = `${page.title} ${page.url} ${hostname(page.url)}`.toLowerCase();
+        if (!haystack.includes(q)) continue;
+        const list = matchingPagesBySession.get(page.sessionId) ?? [];
+        list.push(page);
+        matchingPagesBySession.set(page.sessionId, list);
+      }
+      const matches: { session: Session; pages: Page[] }[] = [];
+      for (const session of sessions) {
+        const nameMatches = session.name.toLowerCase().includes(q);
+        const pageMatches = (session.id && matchingPagesBySession.get(session.id)) || [];
+        if (nameMatches || pageMatches.length > 0) matches.push({ session, pages: pageMatches });
+      }
+      setSessionResults(matches);
+    }, 150);
+    return () => clearTimeout(handle);
+  }, [sessionQuery, sessions]);
 
   async function loadAll() {
     const [w, s] = await Promise.all([listWorkspaces(), listSessions()]);
@@ -265,6 +297,67 @@ export default function Dashboard() {
             </p>
           )}
 
+          {sessions.length > 0 && (
+            <div className="mb-5 flex gap-2">
+              <input
+                value={sessionQuery}
+                onChange={(e) => setSessionQuery(e.target.value)}
+                placeholder="Filter sessions by name, tab title, URL, or domain…"
+                className="flex-1 rounded-lg bg-zinc-900 border border-zinc-800 px-3.5 py-2 text-sm outline-none focus:border-teal-500/60 placeholder:text-zinc-600 transition-colors"
+              />
+              {sessionQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSessionQuery("")}
+                  className="text-sm px-3 py-2 rounded-lg border border-zinc-800 text-zinc-400 hover:bg-zinc-900 transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+
+          {sessionResults && (
+            <div className="mb-8">
+              <p className="text-xs uppercase tracking-wide text-zinc-500 mb-3">
+                {sessionResults.length} session{sessionResults.length === 1 ? "" : "s"} match
+              </p>
+              {sessionResults.length === 0 ? (
+                <p className="text-sm text-zinc-600 border border-dashed border-zinc-800 rounded-xl px-4 py-3">
+                  Nothing matches "{sessionQuery}".
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {sessionResults.map(({ session, pages }) => (
+                    <li key={session.id} className="border border-zinc-800 rounded-xl p-3.5 bg-zinc-900/60">
+                      <p className="text-sm font-medium">{session.name}</p>
+                      {pages.length > 0 ? (
+                        <ul className="mt-1.5 flex flex-col gap-1">
+                          {pages.map((page) => (
+                            <li key={page.id} className="flex items-center gap-2">
+                              <Favicon url={page.url} size={14} />
+                              <a
+                                href={page.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-zinc-500 hover:text-zinc-300 hover:underline truncate"
+                              >
+                                {hostname(page.url)}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-zinc-600 mt-1">{session.tabCount} tabs</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {!sessionResults && (
           <div className="flex flex-col gap-8">
             {grouped.orphaned.length > 0 && (
               <WorkspaceSection
@@ -309,6 +402,7 @@ export default function Dashboard() {
               />
             ))}
           </div>
+          )}
         </div>
       </main>
     </>
