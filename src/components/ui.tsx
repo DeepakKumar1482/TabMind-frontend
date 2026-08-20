@@ -1,20 +1,38 @@
 import { useState } from "react";
+import { hostname } from "../lib/format";
 
+// Chrome's local favicon cache (offline, needs the "favicon" permission +
+// a fresh extension load) is tried first. If that request errors — stale
+// permission grant, browser too old, whatever — it falls back to a public
+// favicon service instead of a blank square. That fallback does leak the
+// domain (not the full URL/title) to a third party per icon; worth knowing
+// even though it's a minor, common trade-off.
 export function Favicon({ url, size = 16 }: { url: string; size?: number }) {
-  const [errored, setErrored] = useState(false);
-  const src =
+  const [stage, setStage] = useState<"local" | "fallback" | "failed">("local");
+
+  const localSrc =
     typeof chrome !== "undefined" && chrome.runtime?.id
       ? `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(url)}&size=${size * 2}`
       : undefined;
+  const fallbackSrc = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname(url))}&sz=${size * 2}`;
 
-  if (!src || errored) {
+  const src = stage === "failed" ? undefined : stage === "local" && localSrc ? localSrc : fallbackSrc;
+
+  if (!src || stage === "failed") {
     return (
       <span className="shrink-0 rounded-sm bg-zinc-800 mt-0.5" style={{ width: size, height: size }} aria-hidden />
     );
   }
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt="" width={size} height={size} className="shrink-0 rounded-sm mt-0.5" onError={() => setErrored(true)} />
+    <img
+      src={src}
+      alt=""
+      width={size}
+      height={size}
+      className="shrink-0 rounded-sm mt-0.5"
+      onError={() => setStage((prev) => (prev === "local" ? "fallback" : "failed"))}
+    />
   );
 }
 
