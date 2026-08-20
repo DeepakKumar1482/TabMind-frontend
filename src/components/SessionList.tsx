@@ -1,6 +1,25 @@
+import { useState } from "react";
 import { Favicon, CopyUrlButton, PageTags, ActionMenu } from "./ui";
 import { hostname, formatWhen, formatShortDate } from "../lib/format";
 import type { Workspace, Session, Page } from "../../shared/types";
+
+type SortKey = "original" | "title" | "domain" | "captured";
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "original", label: "Original order" },
+  { value: "title", label: "Title" },
+  { value: "domain", label: "Domain" },
+  { value: "captured", label: "Recently captured" },
+];
+
+function sortPages(list: Page[], sortBy: SortKey): Page[] {
+  if (sortBy === "original") return list;
+  const copy = [...list];
+  if (sortBy === "title") copy.sort((a, b) => a.title.localeCompare(b.title));
+  else if (sortBy === "domain") copy.sort((a, b) => hostname(a.url).localeCompare(hostname(b.url)));
+  else if (sortBy === "captured") copy.sort((a, b) => b.capturedAt - a.capturedAt);
+  return copy;
+}
 
 export function WorkspaceSection({
   icon,
@@ -126,13 +145,15 @@ export function SessionCard({
   onSelectAllPages: (pageIds: number[]) => void;
   onRestoreSelectedPages: (sessionId: number) => void;
 }) {
+  const [sortBy, setSortBy] = useState<SortKey>("original");
   const pageList = pages ?? [];
   const groupNames: string[] = [];
   for (const page of pageList) {
     if (page.group && !groupNames.includes(page.group)) groupNames.push(page.group);
   }
+  const applySort = (list: Page[]) => sortPages(list, sortBy);
   const pinnedFirst = (list: Page[]) => [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
-  const ungrouped = pinnedFirst(pageList.filter((p) => !p.group));
+  const ungrouped = pinnedFirst(applySort(pageList.filter((p) => !p.group)));
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
       <div className="flex items-center justify-between gap-3">
@@ -210,6 +231,20 @@ export function SessionCard({
               />
               Select all
             </label>
+            <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+              Sort
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortKey)}
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-zinc-400 outline-none focus:border-violet-500/60 transition-colors"
+              >
+                {SORT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             {selectedPageIds.size > 0 && (
               <button
                 onClick={() => session.id && onRestoreSelectedPages(session.id)}
@@ -226,7 +261,7 @@ export function SessionCard({
                   <span aria-hidden>▾</span> {groupName}
                 </p>
                 <ul className="flex flex-col gap-3 pl-1 border-l border-zinc-800 ml-1">
-                  {pinnedFirst(pageList.filter((p) => p.group === groupName)).map((page) => (
+                  {pinnedFirst(applySort(pageList.filter((p) => p.group === groupName))).map((page) => (
                     <PageRow
                       key={page.id}
                       page={page}
