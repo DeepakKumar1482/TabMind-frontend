@@ -1,754 +1,287 @@
 import { useEffect, useMemo, useState } from "react";
 import Head from "next/head";
-import { listWorkspaces, createWorkspace, updateWorkspace } from "../../database/workspaces";
-import { listSessions, updateSession, deleteSession } from "../../database/sessions";
-import { listPagesBySession, listAllPages, listUnprocessedPages, updatePage, deletePage } from "../../database/pages";
-import { processPage } from "../../ai/process";
-import { semanticSearch, type SearchResult } from "../../ai/search";
-import type { Workspace, Session, Page } from "../../shared/types";
+import Link from "next/link";
+import { useSessions } from "../hooks/useSessions";
+import { Favicon, CopyUrlButton, ActionMenu } from "../components/ui";
+import { formatBytes, formatWhen, hostname, timeAgo } from "../lib/format";
+import { listAllPages } from "../../database/pages";
+import type { Page } from "../../shared/types";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default function Dashboard() {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [pagesBySession, setPagesBySession] = useState<Record<number, Page[]>>({});
-  const [expanded, setExpanded] = useState<number | null>(null);
-  const [selectedPageIds, setSelectedPageIds] = useState<Set<number>>(new Set());
-
-  const [aiStatus, setAiStatus] = useState<{ done: number; total: number } | null>(null);
-
-  const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [results, setResults] = useState<SearchResult[] | null>(null);
-
-  const [sessionQuery, setSessionQuery] = useState("");
-  const [sessionResults, setSessionResults] = useState<{ session: Session; pages: Page[] }[] | null>(null);
+  const s = useSessions();
+  const [allPages, setAllPages] = useState<Page[]>([]);
+  const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
+  const [now] = useState(() => Date.now());
 
   useEffect(() => {
-    void loadAll();
-    void runBackgroundProcessing();
+    void listAllPages().then(setAllPages);
+  }, [s.sessions, s.pagesBySession]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.storage?.estimate) return;
+    void navigator.storage.estimate().then((est) => {
+      if (est.usage !== undefined && est.quota !== undefined) setStorage({ usage: est.usage, quota: est.quota });
+    });
   }, []);
 
-  // Instant keyword filter across session name / tab title / URL / domain —
-  // separate from the semantic search above, which ranks by meaning.
-  useEffect(() => {
-    const q = sessionQuery.trim().toLowerCase();
-    if (!q) {
-      setSessionResults(null);
-      return;
+  const stats = useMemo(() => {
+    const thisWeek = now - 7 * DAY_MS;
+    const lastWeek = now - 14 * DAY_MS;
+
+    function weekDelta(timestamps: number[]) {
+      const current = timestamps.filter((t) => t >= thisWeek).length;
+      const previous = timestamps.filter((t) => t >= lastWeek && t < thisWeek).length;
+      if (previous === 0) return current > 0 ? null : 0;
+      return Math.round(((current - previous) / previous) * 100);
     }
-    const handle = setTimeout(async () => {
-      const allPages = await listAllPages();
-      const matchingPagesBySession = new Map<number, Page[]>();
-      for (const page of allPages) {
-        const haystack = `${page.title} ${page.url} ${hostname(page.url)}`.toLowerCase();
-        if (!haystack.includes(q)) continue;
-        const list = matchingPagesBySession.get(page.sessionId) ?? [];
-        list.push(page);
-        matchingPagesBySession.set(page.sessionId, list);
-      }
-      const matches: { session: Session; pages: Page[] }[] = [];
-      for (const session of sessions) {
-        const nameMatches = session.name.toLowerCase().includes(q);
-        const pageMatches = (session.id && matchingPagesBySession.get(session.id)) || [];
-        if (nameMatches || pageMatches.length > 0) matches.push({ session, pages: pageMatches });
-      }
-      setSessionResults(matches);
-    }, 150);
-    return () => clearTimeout(handle);
-  }, [sessionQuery, sessions]);
 
-  async function loadAll() {
-    const [w, s] = await Promise.all([listWorkspaces(), listSessions()]);
-    setWorkspaces(w);
-    setSessions(s);
-  }
+    const sessionTimestamps = s.sessions.map((sess) => sess.createdAt);
+    const totalTabs = s.sessions.reduce((sum, sess) => sum + sess.tabCount, 0);
+    const tabsThisWeek = s.sessions.filter((sess) => sess.createdAt >= thisWeek).reduce((sum, sess) => sum + sess.tabCount, 0);
+    const tabsLastWeek = s.sessions
+      .filter((sess) => sess.createdAt >= lastWeek && sess.createdAt < thisWeek)
+      .reduce((sum, sess) => sum + sess.tabCount, 0);
+    const tabsDelta = tabsLastWeek === 0 ? (tabsThisWeek > 0 ? null : 0) : Math.round(((tabsThisWeek - tabsLastWeek) / tabsLastWeek) * 100);
 
-  // Embeds every captured page that hasn't been indexed yet, one at a time
-  // so the UI stays responsive while the local model works. Runs once per
-  // dashboard load.
-  async function runBackgroundProcessing() {
-    const unprocessed = await listUnprocessedPages();
-    if (unprocessed.length === 0) return;
+    return {
+      totalSessions: s.sessions.length,
+      sessionsDelta: weekDelta(sessionTimestamps),
+      totalTabs,
+      tabsDelta,
+    };
+  }, [s.sessions, now]);
 
-    setAiStatus({ done: 0, total: unprocessed.length });
-    for (let i = 0; i < unprocessed.length; i++) {
-      const page = unprocessed[i];
-      try {
-        const fields = await processPage(page);
-        await updatePage(page.id, fields);
-        setPagesBySession((prev) => {
-          if (!prev[page.sessionId]) return prev;
-          return {
-            ...prev,
-            [page.sessionId]: prev[page.sessionId].map((p) =>
-              p.id === page.id ? { ...p, ...fields } : p
-            ),
-          };
-        });
-      } catch (err) {
-        console.error("AI processing failed for page", page.id, err);
-      }
-      setAiStatus({ done: i + 1, total: unprocessed.length });
+  const activity = useMemo(() => {
+    const days: { label: string; value: number }[] = [];
+    const nowDate = new Date(now);
+    for (let i = 6; i >= 0; i--) {
+      const day = new Date(nowDate);
+      day.setDate(nowDate.getDate() - i);
+      const start = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+      const end = start + DAY_MS;
+      const count = allPages.filter((p) => p.capturedAt >= start && p.capturedAt < end).length;
+      days.push({ label: day.toLocaleDateString(undefined, { weekday: "short" }), value: count });
     }
-  }
+    return days;
+  }, [allPages, now]);
 
-  async function toggleSession(sessionId: number) {
-    setSelectedPageIds(new Set());
-    if (expanded === sessionId) {
-      setExpanded(null);
-      return;
-    }
-    if (!pagesBySession[sessionId]) {
-      const pages = await listPagesBySession(sessionId);
-      setPagesBySession((prev) => ({ ...prev, [sessionId]: pages }));
-    }
-    setExpanded(sessionId);
-  }
+  const recentSessions = [...s.sessions].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+  const recentlyClosed = [...allPages].sort((a, b) => b.capturedAt - a.capturedAt).slice(0, 5);
 
-  async function restoreSession(sessionId: number) {
-    if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    await chrome.runtime.sendMessage({ type: "RESTORE_SESSION", sessionId });
-    await markSessionOpened(sessionId);
+  function workspaceIcon(workspaceId?: number) {
+    return s.workspaces.find((w) => w.id === workspaceId)?.icon ?? "📁";
   }
-
-  async function markSessionOpened(sessionId: number) {
-    const lastOpenedAt = Date.now();
-    await updateSession(sessionId, { lastOpenedAt });
-    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, lastOpenedAt } : s)));
-  }
-
-  function toggleSelectPage(pageId: number) {
-    setSelectedPageIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(pageId)) next.delete(pageId);
-      else next.add(pageId);
-      return next;
-    });
-  }
-
-  function selectAllPages(pageIds: number[]) {
-    setSelectedPageIds((prev) => (prev.size === pageIds.length ? new Set() : new Set(pageIds)));
-  }
-
-  async function restoreSelectedPages(sessionId: number) {
-    const pages = pagesBySession[sessionId] ?? [];
-    const urls = pages.filter((p) => selectedPageIds.has(p.id)).map((p) => p.url);
-    if (!urls.length || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    await chrome.runtime.sendMessage({ type: "RESTORE_PAGES", urls });
-    await markSessionOpened(sessionId);
-  }
-
-  async function runSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!query.trim()) {
-      setResults(null);
-      return;
-    }
-    setSearching(true);
-    try {
-      const pages = await listAllPages();
-      setResults(await semanticSearch(query, pages));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function handleCreateWorkspace() {
-    const name = window.prompt("Workspace name")?.trim();
-    if (!name) return;
-    const icon = window.prompt("Icon (single emoji)", "📁")?.trim() || "📁";
-    await createWorkspace({ name, icon, createdAt: Date.now() });
-    await loadAll();
-  }
-
-  async function handleRenameWorkspace(ws: Workspace) {
-    const name = window.prompt("Rename workspace", ws.name)?.trim();
-    if (!name || name === ws.name) return;
-    await updateWorkspace(ws.id, { name });
-    setWorkspaces((prev) => prev.map((w) => (w.id === ws.id ? { ...w, name } : w)));
-  }
-
-  async function handleAssignWorkspace(sessionId: number, workspaceId: number) {
-    await updateSession(sessionId, { workspaceId });
-    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, workspaceId } : s)));
-  }
-
-  async function handleRenameSession(session: Session) {
-    const name = window.prompt("Rename session", session.name)?.trim();
-    if (!name || name === session.name || !session.id) return;
-    await updateSession(session.id, { name });
-    setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, name } : s)));
-  }
-
-  async function handleDeleteSession(session: Session) {
-    if (!session.id) return;
-    const ok = window.confirm(`Delete "${session.name}" and its ${session.tabCount} tabs? This can't be undone.`);
-    if (!ok) return;
-    await deleteSession(session.id);
-    setSessions((prev) => prev.filter((s) => s.id !== session.id));
-    setPagesBySession((prev) => {
-      const next = { ...prev };
-      delete next[session.id!];
-      return next;
-    });
-    setExpanded((prev) => (prev === session.id ? null : prev));
-  }
-
-  async function handleDeletePage(page: Page) {
-    const ok = window.confirm(`Remove "${page.title}" from this session?`);
-    if (!ok) return;
-    const newTabCount = Math.max(0, (sessions.find((s) => s.id === page.sessionId)?.tabCount ?? 1) - 1);
-    await deletePage(page.id);
-    await updateSession(page.sessionId, { tabCount: newTabCount });
-    setPagesBySession((prev) => {
-      const existing = prev[page.sessionId];
-      if (!existing) return prev;
-      return { ...prev, [page.sessionId]: existing.filter((p) => p.id !== page.id) };
-    });
-    setSessions((prev) => prev.map((s) => (s.id === page.sessionId ? { ...s, tabCount: newTabCount } : s)));
-  }
-
-  const grouped = useMemo(() => {
-    const byWorkspace = workspaces.map((ws) => ({
-      workspace: ws,
-      sessions: sessions.filter((s) => s.workspaceId === ws.id),
-    }));
-    const knownIds = new Set(workspaces.map((w) => w.id));
-    const orphaned = sessions.filter((s) => !s.workspaceId || !knownIds.has(s.workspaceId));
-    return { byWorkspace, orphaned };
-  }, [workspaces, sessions]);
 
   return (
     <>
       <Head>
         <title>TabMind</title>
       </Head>
-      <main className="min-h-screen bg-zinc-950 text-zinc-100 selection:bg-teal-400/20">
-        <div className="max-w-3xl mx-auto px-6 py-10">
-          <header className="flex items-start justify-between gap-4 mb-8">
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                <span aria-hidden>🧠</span> TabMind
-              </h1>
-              <p className="text-sm text-zinc-500 mt-1">
-                {sessions.length} session{sessions.length === 1 ? "" : "s"} across {workspaces.length} workspace
-                {workspaces.length === 1 ? "" : "s"}
-              </p>
-            </div>
-            <button
-              onClick={handleCreateWorkspace}
-              className="text-sm px-3 py-1.5 rounded-lg border border-zinc-800 text-zinc-300 hover:border-teal-500/50 hover:text-teal-300 transition-colors"
-            >
-              + New workspace
-            </button>
-          </header>
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <StatCard label="Total Sessions" value={stats.totalSessions} delta={stats.sessionsDelta} icon="📁" tint="violet" />
+          <StatCard label="Total Tabs" value={stats.totalTabs} delta={stats.tabsDelta} icon="🗂" tint="blue" />
+          <StatCard label="Groups" value={s.workspaces.length} icon="🗃" tint="emerald" caption="workspaces in use" />
+          <StatCard
+            label="Storage Used"
+            value={storage ? formatBytes(storage.usage) : "—"}
+            icon="💾"
+            tint="amber"
+            caption={storage ? `of ${formatBytes(storage.quota)} available` : undefined}
+            raw
+          />
+        </div>
 
-          {aiStatus && aiStatus.done < aiStatus.total && (
-            <p className="text-xs text-amber-400/90 mb-5 font-mono">
-              Indexing pages for search… {aiStatus.done}/{aiStatus.total} (first run downloads a model, cached after)
-            </p>
-          )}
-
-          <form onSubmit={runSearch} className="mb-8 flex gap-2">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Semantic search across every captured page…"
-              className="flex-1 rounded-lg bg-zinc-900 border border-zinc-800 px-3.5 py-2.5 text-sm outline-none focus:border-teal-500/60 placeholder:text-zinc-600 transition-colors"
-            />
-            <button
-              type="submit"
-              disabled={searching}
-              className="text-sm px-4 py-2.5 rounded-lg bg-teal-500 text-zinc-950 font-medium hover:bg-teal-400 disabled:opacity-50 transition-colors"
-            >
-              {searching ? "Searching…" : "Search"}
-            </button>
-            {results && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  setResults(null);
-                }}
-                className="text-sm px-3 py-2.5 rounded-lg border border-zinc-800 text-zinc-400 hover:bg-zinc-900 transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </form>
-
-          {results && (
-            <div className="mb-10">
-              <p className="text-xs uppercase tracking-wide text-zinc-500 mb-3">{results.length} result{results.length === 1 ? "" : "s"}</p>
-              <ul className="flex flex-col gap-2">
-                {results.map(({ page, score }) => (
-                  <li key={page.id} className="border border-zinc-800 rounded-xl p-3.5 bg-zinc-900/60">
-                    <div className="flex items-center gap-2.5">
-                      <Favicon url={page.url} size={16} />
-                      <a href={page.url} target="_blank" rel="noreferrer" className="font-medium text-sm hover:underline truncate flex-1">
-                        {page.title}
-                      </a>
-                      <span className="text-xs text-teal-400/80 shrink-0 font-mono tabular-nums">{(score * 100).toFixed(0)}%</span>
-                      <CopyUrlButton url={page.url} />
-                    </div>
-                    {page.summary && <p className="text-sm text-zinc-400 mt-1.5 ml-[26px]">{page.summary}</p>}
-                    <PageTags tags={page.tags} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {sessions.length === 0 && (
-            <p className="text-zinc-500 text-sm border border-dashed border-zinc-800 rounded-xl p-6 text-center">
-              No sessions yet. Hit the panic button in the extension popup to collapse your tabs.
-            </p>
-          )}
-
-          {sessions.length > 0 && (
-            <div className="mb-5 flex gap-2">
-              <input
-                value={sessionQuery}
-                onChange={(e) => setSessionQuery(e.target.value)}
-                placeholder="Filter sessions by name, tab title, URL, or domain…"
-                className="flex-1 rounded-lg bg-zinc-900 border border-zinc-800 px-3.5 py-2 text-sm outline-none focus:border-teal-500/60 placeholder:text-zinc-600 transition-colors"
-              />
-              {sessionQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSessionQuery("")}
-                  className="text-sm px-3 py-2 rounded-lg border border-zinc-800 text-zinc-400 hover:bg-zinc-900 transition-colors"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          )}
-
-          {sessionResults && (
-            <div className="mb-8">
-              <p className="text-xs uppercase tracking-wide text-zinc-500 mb-3">
-                {sessionResults.length} session{sessionResults.length === 1 ? "" : "s"} match
-              </p>
-              {sessionResults.length === 0 ? (
-                <p className="text-sm text-zinc-600 border border-dashed border-zinc-800 rounded-xl px-4 py-3">
-                  Nothing matches "{sessionQuery}".
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 flex flex-col gap-8">
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-zinc-300">Recent Sessions</h2>
+                <Link href="/sessions" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">
+                  View all
+                </Link>
+              </div>
+              {recentSessions.length === 0 ? (
+                <p className="text-sm text-zinc-600 border border-dashed border-zinc-800 rounded-xl p-6 text-center">
+                  No sessions yet. Hit Collapse Tabs to capture your open tabs.
                 </p>
               ) : (
-                <ul className="flex flex-col gap-3">
-                  {sessionResults.map(({ session, pages }) => (
-                    <li key={session.id} className="border border-zinc-800 rounded-xl p-3.5 bg-zinc-900/60">
-                      <p className="text-sm font-medium">{session.name}</p>
-                      {pages.length > 0 ? (
-                        <ul className="mt-1.5 flex flex-col gap-1">
-                          {pages.map((page) => (
-                            <li key={page.id} className="flex items-center gap-2">
-                              <Favicon url={page.url} size={14} />
-                              <a
-                                href={page.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-xs text-zinc-500 hover:text-zinc-300 hover:underline truncate"
-                              >
-                                {hostname(page.url)}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-xs text-zinc-600 mt-1">{session.tabCount} tabs</p>
-                      )}
+                <ul className="border border-zinc-800 rounded-xl divide-y divide-zinc-800 overflow-hidden">
+                  {recentSessions.map((session) => (
+                    <li key={session.id} className="flex items-center gap-3 px-4 py-3.5 bg-zinc-900/40">
+                      <span className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-sm shrink-0" aria-hidden>
+                        {workspaceIcon(session.workspaceId)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{session.name}</p>
+                        <p className="text-xs text-zinc-500 mt-0.5">{formatWhen(session.createdAt)}</p>
+                      </div>
+                      <span className="text-xs text-zinc-500 font-mono tabular-nums shrink-0">{session.tabCount} tabs</span>
+                      <button
+                        onClick={() => session.id && s.restoreSession(session.id)}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-violet-500 text-white font-medium hover:bg-violet-400 transition-colors shrink-0"
+                      >
+                        Restore
+                      </button>
+                      <ActionMenu
+                        items={[
+                          { label: "Rename", onClick: () => s.handleRenameSession(session) },
+                          { label: "Delete", onClick: () => s.handleDeleteSession(session), danger: true },
+                        ]}
+                      />
                     </li>
                   ))}
                 </ul>
               )}
-            </div>
-          )}
+            </section>
 
-          {!sessionResults && (
-          <div className="flex flex-col gap-8">
-            {grouped.orphaned.length > 0 && (
-              <WorkspaceSection
-                icon="❔"
-                name="Unassigned"
-                sessions={grouped.orphaned}
-                workspaces={workspaces}
-                expanded={expanded}
-                pagesBySession={pagesBySession}
-                onToggle={toggleSession}
-                onRestore={restoreSession}
-                onAssign={handleAssignWorkspace}
-                onRenameSession={handleRenameSession}
-                onDeleteSession={handleDeleteSession}
-                onDeletePage={handleDeletePage}
-                selectedPageIds={selectedPageIds}
-                onToggleSelectPage={toggleSelectPage}
-                onSelectAllPages={selectAllPages}
-                onRestoreSelectedPages={restoreSelectedPages}
-              />
-            )}
-            {grouped.byWorkspace.map(({ workspace, sessions: wsSessions }) => (
-              <WorkspaceSection
-                key={workspace.id}
-                icon={workspace.icon}
-                name={workspace.name}
-                sessions={wsSessions}
-                workspaces={workspaces}
-                expanded={expanded}
-                pagesBySession={pagesBySession}
-                onToggle={toggleSession}
-                onRestore={restoreSession}
-                onAssign={handleAssignWorkspace}
-                onRenameSession={handleRenameSession}
-                onDeleteSession={handleDeleteSession}
-                onDeletePage={handleDeletePage}
-                selectedPageIds={selectedPageIds}
-                onToggleSelectPage={toggleSelectPage}
-                onSelectAllPages={selectAllPages}
-                onRestoreSelectedPages={restoreSelectedPages}
-                onRename={() => handleRenameWorkspace(workspace)}
-              />
-            ))}
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-zinc-300">Recently Closed Tabs</h2>
+                <Link href="/recently-closed" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">
+                  View all
+                </Link>
+              </div>
+              {recentlyClosed.length === 0 ? (
+                <p className="text-sm text-zinc-600 border border-dashed border-zinc-800 rounded-xl p-6 text-center">
+                  Nothing captured yet.
+                </p>
+              ) : (
+                <ul className="border border-zinc-800 rounded-xl divide-y divide-zinc-800 overflow-hidden">
+                  {recentlyClosed.map((page) => (
+                    <li key={page.id} className="flex items-center gap-3 px-4 py-3 bg-zinc-900/40 group">
+                      <Favicon url={page.url} size={18} />
+                      <div className="min-w-0 flex-1">
+                        <a href={page.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-200 hover:underline truncate block">
+                          {page.title}
+                        </a>
+                        <p className="text-xs text-zinc-600 truncate">{hostname(page.url)}</p>
+                      </div>
+                      <span className="text-xs text-zinc-600 shrink-0 font-mono">Closed {timeAgo(page.capturedAt)}</span>
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <CopyUrlButton url={page.url} />
+                      </div>
+                      <button
+                        onClick={() => s.reopenPage(page)}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors shrink-0"
+                      >
+                        Reopen
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
-          )}
+
+          <aside>
+            <div className="border border-zinc-800 rounded-xl p-5 bg-zinc-900/40">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-zinc-300">Activity Overview</h2>
+                <span className="text-xs text-zinc-600">Last 7 days</span>
+              </div>
+              <ActivityChart data={activity} />
+            </div>
+          </aside>
         </div>
-      </main>
+      </div>
     </>
   );
 }
 
-function WorkspaceSection({
+function StatCard({
+  label,
+  value,
+  delta,
   icon,
-  name,
-  sessions,
-  workspaces,
-  expanded,
-  pagesBySession,
-  onToggle,
-  onRestore,
-  onAssign,
-  onRenameSession,
-  onDeleteSession,
-  onDeletePage,
-  selectedPageIds,
-  onToggleSelectPage,
-  onSelectAllPages,
-  onRestoreSelectedPages,
-  onRename,
+  tint,
+  caption,
+  raw,
 }: {
+  label: string;
+  value: number | string;
+  delta?: number | null;
   icon: string;
-  name: string;
-  sessions: Session[];
-  workspaces: Workspace[];
-  expanded: number | null;
-  pagesBySession: Record<number, Page[]>;
-  onToggle: (id: number) => void;
-  onRestore: (id: number) => void;
-  onAssign: (sessionId: number, workspaceId: number) => void;
-  onRenameSession: (session: Session) => void;
-  onDeleteSession: (session: Session) => void;
-  onDeletePage: (page: Page) => void;
-  selectedPageIds: Set<number>;
-  onToggleSelectPage: (pageId: number) => void;
-  onSelectAllPages: (pageIds: number[]) => void;
-  onRestoreSelectedPages: (sessionId: number) => void;
-  onRename?: () => void;
+  tint: "violet" | "blue" | "emerald" | "amber";
+  caption?: string;
+  raw?: boolean;
 }) {
+  const tintClasses: Record<typeof tint, string> = {
+    violet: "bg-violet-500/15 text-violet-300",
+    blue: "bg-blue-500/15 text-blue-300",
+    emerald: "bg-emerald-500/15 text-emerald-300",
+    amber: "bg-amber-500/15 text-amber-300",
+  };
+
   return (
-    <section>
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-base" aria-hidden>{icon}</span>
-        <h2 className="text-sm font-semibold text-zinc-300">{name}</h2>
-        <span className="text-xs text-zinc-600 font-mono tabular-nums">{sessions.length}</span>
-        {onRename && (
-          <button
-            onClick={onRename}
-            className="text-xs text-zinc-600 hover:text-teal-300 ml-auto transition-colors"
-          >
-            Rename
-          </button>
+    <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 flex items-start gap-3">
+      <span className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg shrink-0 ${tintClasses[tint]}`} aria-hidden>
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-xs text-zinc-500">{label}</p>
+        <p className="text-xl font-semibold tabular-nums mt-0.5 truncate">{value}</p>
+        {!raw && delta !== undefined && delta !== null && (
+          <p className={`text-xs mt-0.5 ${delta >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+            {delta >= 0 ? "↑" : "↓"} {Math.abs(delta)}% this week
+          </p>
         )}
+        {caption && <p className="text-xs text-zinc-600 mt-0.5">{caption}</p>}
       </div>
-
-      {sessions.length === 0 ? (
-        <p className="text-xs text-zinc-600 border border-dashed border-zinc-800 rounded-xl px-4 py-3">
-          Nothing assigned here yet.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {sessions.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              workspaces={workspaces}
-              isExpanded={expanded === session.id}
-              pages={session.id ? pagesBySession[session.id] : undefined}
-              onToggle={onToggle}
-              onRestore={onRestore}
-              onAssign={onAssign}
-              onRenameSession={onRenameSession}
-              onDeleteSession={onDeleteSession}
-              onDeletePage={onDeletePage}
-              selectedPageIds={selectedPageIds}
-              onToggleSelectPage={onToggleSelectPage}
-              onSelectAllPages={onSelectAllPages}
-              onRestoreSelectedPages={onRestoreSelectedPages}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SessionCard({
-  session,
-  workspaces,
-  isExpanded,
-  pages,
-  onToggle,
-  onRestore,
-  onAssign,
-  onRenameSession,
-  onDeleteSession,
-  onDeletePage,
-  selectedPageIds,
-  onToggleSelectPage,
-  onSelectAllPages,
-  onRestoreSelectedPages,
-}: {
-  session: Session;
-  workspaces: Workspace[];
-  isExpanded: boolean;
-  pages: Page[] | undefined;
-  onToggle: (id: number) => void;
-  onRestore: (id: number) => void;
-  onAssign: (sessionId: number, workspaceId: number) => void;
-  onRenameSession: (session: Session) => void;
-  onDeleteSession: (session: Session) => void;
-  onDeletePage: (page: Page) => void;
-  selectedPageIds: Set<number>;
-  onToggleSelectPage: (pageId: number) => void;
-  onSelectAllPages: (pageIds: number[]) => void;
-  onRestoreSelectedPages: (sessionId: number) => void;
-}) {
-  return (
-    <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 group flex items-baseline gap-1.5">
-          <div className="min-w-0">
-            <p className="font-medium text-sm truncate">{session.name}</p>
-            <p className="text-xs text-zinc-500 mt-0.5 font-mono tabular-nums">
-              {session.tabCount} tabs · {new Date(session.createdAt).toLocaleString()}
-            </p>
-          </div>
-          <button
-            onClick={() => onRenameSession(session)}
-            aria-label="Rename session"
-            className="text-xs text-zinc-700 hover:text-teal-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-          >
-            ✎
-          </button>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <select
-            value={session.workspaceId ?? ""}
-            onChange={(e) => session.id && onAssign(session.id, Number(e.target.value))}
-            className="text-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-zinc-400 outline-none focus:border-teal-500/60 transition-colors"
-          >
-            <option value="" disabled>
-              Move to…
-            </option>
-            {workspaces.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.icon} {w.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => session.id && onToggle(session.id)}
-            className="text-xs px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
-          >
-            {isExpanded ? "Hide" : "View"}
-          </button>
-          <button
-            onClick={() => session.id && onRestore(session.id)}
-            className="text-xs px-3 py-1.5 rounded-lg bg-teal-500 text-zinc-950 font-medium hover:bg-teal-400 transition-colors"
-          >
-            Restore
-          </button>
-          <button
-            onClick={() => onDeleteSession(session)}
-            aria-label="Delete session"
-            className="text-xs px-2.5 py-1.5 rounded-lg text-zinc-600 hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
-          >
-            🗑
-          </button>
-        </div>
-      </div>
-
-      {isExpanded && (
-        <div className="mt-4 border-t border-zinc-800 pt-3.5">
-          <dl className="flex flex-wrap gap-x-5 gap-y-1 mb-3.5 text-xs">
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-zinc-600">Tabs</dt>
-              <dd className="font-mono tabular-nums text-zinc-300">{(pages ?? []).length}</dd>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-zinc-600">Domains</dt>
-              <dd className="font-mono tabular-nums text-zinc-300">
-                {new Set((pages ?? []).map((p) => hostname(p.url))).size}
-              </dd>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-zinc-600">Created</dt>
-              <dd className="text-zinc-300">{formatWhen(session.createdAt)}</dd>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-zinc-600">Last opened</dt>
-              <dd className="text-zinc-300">{session.lastOpenedAt ? formatWhen(session.lastOpenedAt) : "Never"}</dd>
-            </div>
-          </dl>
-          <div className="flex items-center gap-3 mb-2.5">
-            <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={(pages ?? []).length > 0 && selectedPageIds.size === (pages ?? []).length}
-                onChange={() => onSelectAllPages((pages ?? []).map((p) => p.id))}
-                className="accent-teal-500"
-              />
-              Select all
-            </label>
-            {selectedPageIds.size > 0 && (
-              <button
-                onClick={() => session.id && onRestoreSelectedPages(session.id)}
-                className="text-xs px-2.5 py-1 rounded-lg bg-teal-500 text-zinc-950 font-medium hover:bg-teal-400 transition-colors ml-auto"
-              >
-                Restore {selectedPageIds.size} selected
-              </button>
-            )}
-          </div>
-          <ul className="flex flex-col gap-3">
-            {(pages ?? []).map((page) => (
-              <li key={page.id} className="flex gap-2.5 group">
-                <input
-                  type="checkbox"
-                  checked={selectedPageIds.has(page.id)}
-                  onChange={() => onToggleSelectPage(page.id)}
-                  className="accent-teal-500 mt-1 shrink-0"
-                />
-                <Favicon url={page.url} size={16} />
-                <div className="min-w-0 flex-1">
-                  <a href={page.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-200 hover:underline truncate block">
-                    {page.title}
-                  </a>
-                  <p className="text-xs text-zinc-600 truncate">{hostname(page.url)}</p>
-                  {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
-                  <PageTags tags={page.tags} />
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
-                  <CopyUrlButton url={page.url} />
-                  <button
-                    onClick={() => onDeletePage(page)}
-                    aria-label="Remove tab from session"
-                    className="text-xs text-zinc-700 hover:text-rose-400"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
 
-function CopyUrlButton({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
+function ActivityChart({ data }: { data: { label: string; value: number }[] }) {
+  const width = 260;
+  const height = 120;
+  const padding = 8;
+  const max = Math.max(1, ...data.map((d) => d.value));
 
-  async function handleCopy() {
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
+  const points = data.map((d, i) => {
+    const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+    const y = height - padding - (d.value / max) * (height - padding * 2);
+    return { x, y, ...d };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
+  const areaPath = `${linePath} L${points[points.length - 1].x},${height - padding} L${points[0].x},${height - padding} Z`;
 
   return (
-    <button
-      onClick={handleCopy}
-      aria-label="Copy URL"
-      className={`text-xs px-1.5 shrink-0 transition-colors ${
-        copied ? "text-teal-400" : "text-zinc-700 hover:text-teal-300"
-      }`}
-    >
-      {copied ? "✓" : "⧉"}
-    </button>
-  );
-}
-
-function Favicon({ url, size = 16 }: { url: string; size?: number }) {
-  const [errored, setErrored] = useState(false);
-  const src =
-    typeof chrome !== "undefined" && chrome.runtime?.id
-      ? `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(url)}&size=${size * 2}`
-      : undefined;
-
-  if (!src || errored) {
-    return (
-      <span
-        className="shrink-0 rounded-sm bg-zinc-800 mt-0.5"
-        style={{ width: size, height: size }}
-        aria-hidden
-      />
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt=""
-      width={size}
-      height={size}
-      className="shrink-0 rounded-sm mt-0.5"
-      onError={() => setErrored(true)}
-    />
-  );
-}
-
-function hostname(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
-function formatWhen(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
-  if (sameDay) return "Today";
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const wasYesterday =
-    date.getFullYear() === yesterday.getFullYear() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getDate() === yesterday.getDate();
-  if (wasYesterday) return "Yesterday";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function PageTags({ tags }: { tags: string[] }) {
-  if (!tags.length) return null;
-  return (
-    <div className="flex gap-1.5 mt-1.5 flex-wrap">
-      {tags.map((tag) => (
-        <span key={tag} className="text-[11px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
-          {tag}
-        </span>
-      ))}
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" role="img" aria-label="Tabs captured per day, last 7 days">
+        <defs>
+          <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgb(167 139 250)" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="rgb(167 139 250)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line
+            key={f}
+            x1={padding}
+            x2={width - padding}
+            y1={padding + f * (height - padding * 2)}
+            y2={padding + f * (height - padding * 2)}
+            stroke="rgb(39 39 42)"
+            strokeWidth="1"
+          />
+        ))}
+        <path d={areaPath} fill="url(#activityFill)" />
+        <path d={linePath} fill="none" stroke="rgb(167 139 250)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p) => (
+          <circle key={p.label} cx={p.x} cy={p.y} r="2.5" fill="rgb(167 139 250)" />
+        ))}
+      </svg>
+      <div className="flex justify-between mt-1.5">
+        {data.map((d) => (
+          <span key={d.label} className="text-[10px] text-zinc-600 font-mono">
+            {d.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
