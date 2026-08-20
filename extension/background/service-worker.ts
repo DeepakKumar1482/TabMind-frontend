@@ -1,4 +1,4 @@
-import { panicCapture, saveCurrentSession, restorePages } from "./tab-manager";
+import { panicCapture, saveCurrentSession, restorePages, restoreSessionWindows } from "./tab-manager";
 import { getSession } from "../../database/sessions";
 import { listPagesBySession } from "../../database/pages";
 import type { ExtensionMessage } from "./message-handler";
@@ -18,7 +18,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
         const session = await getSession(message.sessionId);
         if (!session) return sendResponse({ ok: false });
         const pages = await listPagesBySession(message.sessionId);
-        await restorePages(pages.map((p) => p.url));
+        await restoreSessionWindows(pages);
         sendResponse({ ok: true });
       })();
       return true;

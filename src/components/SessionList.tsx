@@ -160,7 +160,9 @@ export function SessionCard({
         <div className="min-w-0">
           <p className="font-medium text-sm truncate">{session.name}</p>
           <p className="text-xs text-zinc-500 mt-0.5 font-mono tabular-nums">
-            {session.tabCount} tabs · {formatWhen(session.createdAt)}
+            {session.tabCount} tabs
+            {session.windowCount && session.windowCount > 1 ? ` · ${session.windowCount} windows` : ""} ·{" "}
+            {formatWhen(session.createdAt)}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
