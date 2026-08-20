@@ -59,7 +59,13 @@ frontend/
 ├── shared/
 │   ├── types/
 │   └── constants/protected-domains.ts
-├── src/app/                    # Next.js dashboard (static-exported, packaged into the extension)
+├── src/pages/                   # Next.js dashboard, Pages Router (static-exported, packaged into the extension)
+│   ├── index.tsx                 # Dashboard overview — stats, recent sessions, activity chart
+│   ├── sessions.tsx               # Full session/workspace management (search, rename, delete, restore)
+│   └── recently-closed.tsx        # Full recently-captured-tabs feed
+├── src/components/              # Layout (sidebar/topbar), SessionList (Workspace/SessionCard), ui.tsx (Favicon/CopyUrlButton/ActionMenu/PageTags)
+├── src/hooks/useSessions.ts     # Shared session/workspace state + CRUD, used by index.tsx and sessions.tsx
+├── src/lib/format.ts            # hostname/formatWhen/timeAgo/formatBytes
 ├── ai/                          # Phase 2 — local AI (Transformers.js), dashboard-only
 │   ├── pipelines.ts             # lazy singleton loader (embedder only)
 │   ├── embeddings.ts            # embed(text), cosineSimilarity()
@@ -104,10 +110,18 @@ No AI categorization (both attempts at it were dropped — see above). Sessions 
 
 Each page row also renders its site favicon via the `favicon` permission + `chrome-extension://<id>/_favicon/?pageUrl=…` (Chrome's own local favicon cache — no network call, works offline).
 
+V1 session-management pass (own git branch each, merged sequentially): rename/delete session, delete individual tabs, copy URL, restore selected tabs, keyword session search (separate from semantic search), session metadata (tabs/domains/created/last opened via a new `lastOpenedAt` field).
+
+## Dashboard redesign
+
+Multi-page shell (`src/components/Layout.tsx`, wrapped in `_app.tsx`) — sidebar (Dashboard/Sessions/Recently Closed nav, Groups list with live session counts, storage meter via `navigator.storage.estimate()`) + topbar search with ⌘K focus. Violet accent, replacing the earlier teal single-page layout.
+
+Every stat shown is backed by real data — no placeholder numbers. Dashboard overview computes Total Sessions/Tabs with real week-over-week deltas (from `createdAt` timestamps), Groups count, and Storage Used; the Activity Overview chart (hand-rolled inline SVG, no charting library) buckets real `capturedAt` timestamps into the last 7 days. "Recently Closed" is genuinely the most-recently-captured pages across all sessions (`capturedAt` desc), not a separate soft-delete feature. Deliberately **not** included: Pinned Tabs, Hours Saved, notifications, user profile/avatar — none have a real data source yet (no pin feature, no accounts, no meaningful "hours saved" formula), so they're left out rather than faked.
+
 ## Status
 
 **Phase 1 (Tab Capture / IndexedDB / Dashboard / Restore)** — done, building clean.
 **Phase 2 (Local AI: embeddings, semantic search)** — done, building clean. Runs entirely client-side in the dashboard, on-device.
-**Phase 3 (Manual workspace organization, favicons)** — done, building clean.
+**Phase 3 (Manual workspace organization, favicons, session management V1, dashboard redesign)** — done, building clean.
 
 Not yet done: duplicate/cleanup UI, research mode, knowledge graph, real icons (placeholders are solid-color PNGs), Vitest/Playwright tests, `@xenova/transformers` audit findings above. See root project doc for full feature list and phased build order.
