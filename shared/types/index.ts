@@ -13,6 +13,7 @@ export interface Session {
   name: string;
   createdAt: number;
   tabCount: number;
+  lastOpenedAt?: number;
 }
 
 export interface Page {

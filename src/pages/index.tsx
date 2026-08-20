@@ -108,6 +108,13 @@ export default function Dashboard() {
   async function restoreSession(sessionId: number) {
     if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
     await chrome.runtime.sendMessage({ type: "RESTORE_SESSION", sessionId });
+    await markSessionOpened(sessionId);
+  }
+
+  async function markSessionOpened(sessionId: number) {
+    const lastOpenedAt = Date.now();
+    await updateSession(sessionId, { lastOpenedAt });
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, lastOpenedAt } : s)));
   }
 
   function toggleSelectPage(pageId: number) {
@@ -128,6 +135,7 @@ export default function Dashboard() {
     const urls = pages.filter((p) => selectedPageIds.has(p.id)).map((p) => p.url);
     if (!urls.length || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
     await chrome.runtime.sendMessage({ type: "RESTORE_PAGES", urls });
+    await markSessionOpened(sessionId);
   }
 
   async function runSearch(e: React.FormEvent) {
@@ -581,6 +589,26 @@ function SessionCard({
 
       {isExpanded && (
         <div className="mt-4 border-t border-zinc-800 pt-3.5">
+          <dl className="flex flex-wrap gap-x-5 gap-y-1 mb-3.5 text-xs">
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-zinc-600">Tabs</dt>
+              <dd className="font-mono tabular-nums text-zinc-300">{(pages ?? []).length}</dd>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-zinc-600">Domains</dt>
+              <dd className="font-mono tabular-nums text-zinc-300">
+                {new Set((pages ?? []).map((p) => hostname(p.url))).size}
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-zinc-600">Created</dt>
+              <dd className="text-zinc-300">{formatWhen(session.createdAt)}</dd>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-zinc-600">Last opened</dt>
+              <dd className="text-zinc-300">{session.lastOpenedAt ? formatWhen(session.lastOpenedAt) : "Never"}</dd>
+            </div>
+          </dl>
           <div className="flex items-center gap-3 mb-2.5">
             <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer select-none">
               <input
@@ -694,6 +722,22 @@ function hostname(url: string): string {
   } catch {
     return url;
   }
+}
+
+function formatWhen(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  if (sameDay) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const wasYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
+  if (wasYesterday) return "Yesterday";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function PageTags({ tags }: { tags: string[] }) {
