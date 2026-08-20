@@ -11,6 +11,7 @@ const NAV = [
   { href: "/sessions", label: "Sessions", icon: "▤" },
   { href: "/recently-closed", label: "Recently Closed", icon: "↺" },
   { href: "/duplicates", label: "Duplicates", icon: "⧉" },
+  { href: "/domains", label: "Domains", icon: "◈" },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
