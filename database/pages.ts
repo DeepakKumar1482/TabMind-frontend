@@ -30,3 +30,7 @@ export async function listUnprocessedPages(): Promise<Page[]> {
 export async function updatePage(id: number, changes: Partial<Omit<Page, "id">>): Promise<void> {
   await db.pages.update(id, changes);
 }
+
+export async function deletePage(id: number): Promise<void> {
+  await db.pages.delete(id);
+}

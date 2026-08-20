@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Head from "next/head";
 import { listWorkspaces, createWorkspace, updateWorkspace } from "../../database/workspaces";
 import { listSessions, updateSession, deleteSession } from "../../database/sessions";
-import { listPagesBySession, listAllPages, listUnprocessedPages, updatePage } from "../../database/pages";
+import { listPagesBySession, listAllPages, listUnprocessedPages, updatePage, deletePage } from "../../database/pages";
 import { processPage } from "../../ai/process";
 import { semanticSearch, type SearchResult } from "../../ai/search";
 import type { Workspace, Session, Page } from "../../shared/types";
@@ -132,6 +132,20 @@ export default function Dashboard() {
     setExpanded((prev) => (prev === session.id ? null : prev));
   }
 
+  async function handleDeletePage(page: Page) {
+    const ok = window.confirm(`Remove "${page.title}" from this session?`);
+    if (!ok) return;
+    const newTabCount = Math.max(0, (sessions.find((s) => s.id === page.sessionId)?.tabCount ?? 1) - 1);
+    await deletePage(page.id);
+    await updateSession(page.sessionId, { tabCount: newTabCount });
+    setPagesBySession((prev) => {
+      const existing = prev[page.sessionId];
+      if (!existing) return prev;
+      return { ...prev, [page.sessionId]: existing.filter((p) => p.id !== page.id) };
+    });
+    setSessions((prev) => prev.map((s) => (s.id === page.sessionId ? { ...s, tabCount: newTabCount } : s)));
+  }
+
   const grouped = useMemo(() => {
     const byWorkspace = workspaces.map((ws) => ({
       workspace: ws,
@@ -242,6 +256,7 @@ export default function Dashboard() {
                 onAssign={handleAssignWorkspace}
                 onRenameSession={handleRenameSession}
                 onDeleteSession={handleDeleteSession}
+                onDeletePage={handleDeletePage}
               />
             )}
             {grouped.byWorkspace.map(({ workspace, sessions: wsSessions }) => (
@@ -258,6 +273,7 @@ export default function Dashboard() {
                 onAssign={handleAssignWorkspace}
                 onRenameSession={handleRenameSession}
                 onDeleteSession={handleDeleteSession}
+                onDeletePage={handleDeletePage}
                 onRename={() => handleRenameWorkspace(workspace)}
               />
             ))}
@@ -280,6 +296,7 @@ function WorkspaceSection({
   onAssign,
   onRenameSession,
   onDeleteSession,
+  onDeletePage,
   onRename,
 }: {
   icon: string;
@@ -293,6 +310,7 @@ function WorkspaceSection({
   onAssign: (sessionId: number, workspaceId: number) => void;
   onRenameSession: (session: Session) => void;
   onDeleteSession: (session: Session) => void;
+  onDeletePage: (page: Page) => void;
   onRename?: () => void;
 }) {
   return (
@@ -329,6 +347,7 @@ function WorkspaceSection({
               onAssign={onAssign}
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
+              onDeletePage={onDeletePage}
             />
           ))}
         </div>
@@ -347,6 +366,7 @@ function SessionCard({
   onAssign,
   onRenameSession,
   onDeleteSession,
+  onDeletePage,
 }: {
   session: Session;
   workspaces: Workspace[];
@@ -357,6 +377,7 @@ function SessionCard({
   onAssign: (sessionId: number, workspaceId: number) => void;
   onRenameSession: (session: Session) => void;
   onDeleteSession: (session: Session) => void;
+  onDeletePage: (page: Page) => void;
 }) {
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
@@ -416,7 +437,7 @@ function SessionCard({
       {isExpanded && (
         <ul className="mt-4 flex flex-col gap-3 border-t border-zinc-800 pt-3.5">
           {(pages ?? []).map((page) => (
-            <li key={page.id} className="flex gap-2.5">
+            <li key={page.id} className="flex gap-2.5 group">
               <Favicon url={page.url} size={16} />
               <div className="min-w-0 flex-1">
                 <a href={page.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-200 hover:underline truncate block">
@@ -426,6 +447,13 @@ function SessionCard({
                 {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
                 <PageTags tags={page.tags} />
               </div>
+              <button
+                onClick={() => onDeletePage(page)}
+                aria-label="Remove tab from session"
+                className="text-xs text-zinc-700 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start"
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>
