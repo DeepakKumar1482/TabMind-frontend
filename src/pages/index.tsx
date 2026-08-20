@@ -111,6 +111,13 @@ export default function Dashboard() {
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, workspaceId } : s)));
   }
 
+  async function handleRenameSession(session: Session) {
+    const name = window.prompt("Rename session", session.name)?.trim();
+    if (!name || name === session.name || !session.id) return;
+    await updateSession(session.id, { name });
+    setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, name } : s)));
+  }
+
   const grouped = useMemo(() => {
     const byWorkspace = workspaces.map((ws) => ({
       workspace: ws,
@@ -219,6 +226,7 @@ export default function Dashboard() {
                 onToggle={toggleSession}
                 onRestore={restoreSession}
                 onAssign={handleAssignWorkspace}
+                onRenameSession={handleRenameSession}
               />
             )}
             {grouped.byWorkspace.map(({ workspace, sessions: wsSessions }) => (
@@ -233,6 +241,7 @@ export default function Dashboard() {
                 onToggle={toggleSession}
                 onRestore={restoreSession}
                 onAssign={handleAssignWorkspace}
+                onRenameSession={handleRenameSession}
                 onRename={() => handleRenameWorkspace(workspace)}
               />
             ))}
@@ -253,6 +262,7 @@ function WorkspaceSection({
   onToggle,
   onRestore,
   onAssign,
+  onRenameSession,
   onRename,
 }: {
   icon: string;
@@ -264,6 +274,7 @@ function WorkspaceSection({
   onToggle: (id: number) => void;
   onRestore: (id: number) => void;
   onAssign: (sessionId: number, workspaceId: number) => void;
+  onRenameSession: (session: Session) => void;
   onRename?: () => void;
 }) {
   return (
@@ -298,6 +309,7 @@ function WorkspaceSection({
               onToggle={onToggle}
               onRestore={onRestore}
               onAssign={onAssign}
+              onRenameSession={onRenameSession}
             />
           ))}
         </div>
@@ -314,6 +326,7 @@ function SessionCard({
   onToggle,
   onRestore,
   onAssign,
+  onRenameSession,
 }: {
   session: Session;
   workspaces: Workspace[];
@@ -322,15 +335,25 @@ function SessionCard({
   onToggle: (id: number) => void;
   onRestore: (id: number) => void;
   onAssign: (sessionId: number, workspaceId: number) => void;
+  onRenameSession: (session: Session) => void;
 }) {
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
       <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-medium text-sm truncate">{session.name}</p>
-          <p className="text-xs text-zinc-500 mt-0.5 font-mono tabular-nums">
-            {session.tabCount} tabs · {new Date(session.createdAt).toLocaleString()}
-          </p>
+        <div className="min-w-0 group flex items-baseline gap-1.5">
+          <div className="min-w-0">
+            <p className="font-medium text-sm truncate">{session.name}</p>
+            <p className="text-xs text-zinc-500 mt-0.5 font-mono tabular-nums">
+              {session.tabCount} tabs · {new Date(session.createdAt).toLocaleString()}
+            </p>
+          </div>
+          <button
+            onClick={() => onRenameSession(session)}
+            aria-label="Rename session"
+            className="text-xs text-zinc-700 hover:text-teal-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+          >
+            ✎
+          </button>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <select
