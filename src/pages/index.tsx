@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Head from "next/head";
 import { listWorkspaces, createWorkspace, updateWorkspace } from "../../database/workspaces";
-import { listSessions, updateSession } from "../../database/sessions";
+import { listSessions, updateSession, deleteSession } from "../../database/sessions";
 import { listPagesBySession, listAllPages, listUnprocessedPages, updatePage } from "../../database/pages";
 import { processPage } from "../../ai/process";
 import { semanticSearch, type SearchResult } from "../../ai/search";
@@ -118,6 +118,20 @@ export default function Dashboard() {
     setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, name } : s)));
   }
 
+  async function handleDeleteSession(session: Session) {
+    if (!session.id) return;
+    const ok = window.confirm(`Delete "${session.name}" and its ${session.tabCount} tabs? This can't be undone.`);
+    if (!ok) return;
+    await deleteSession(session.id);
+    setSessions((prev) => prev.filter((s) => s.id !== session.id));
+    setPagesBySession((prev) => {
+      const next = { ...prev };
+      delete next[session.id!];
+      return next;
+    });
+    setExpanded((prev) => (prev === session.id ? null : prev));
+  }
+
   const grouped = useMemo(() => {
     const byWorkspace = workspaces.map((ws) => ({
       workspace: ws,
@@ -227,6 +241,7 @@ export default function Dashboard() {
                 onRestore={restoreSession}
                 onAssign={handleAssignWorkspace}
                 onRenameSession={handleRenameSession}
+                onDeleteSession={handleDeleteSession}
               />
             )}
             {grouped.byWorkspace.map(({ workspace, sessions: wsSessions }) => (
@@ -242,6 +257,7 @@ export default function Dashboard() {
                 onRestore={restoreSession}
                 onAssign={handleAssignWorkspace}
                 onRenameSession={handleRenameSession}
+                onDeleteSession={handleDeleteSession}
                 onRename={() => handleRenameWorkspace(workspace)}
               />
             ))}
@@ -263,6 +279,7 @@ function WorkspaceSection({
   onRestore,
   onAssign,
   onRenameSession,
+  onDeleteSession,
   onRename,
 }: {
   icon: string;
@@ -275,6 +292,7 @@ function WorkspaceSection({
   onRestore: (id: number) => void;
   onAssign: (sessionId: number, workspaceId: number) => void;
   onRenameSession: (session: Session) => void;
+  onDeleteSession: (session: Session) => void;
   onRename?: () => void;
 }) {
   return (
@@ -310,6 +328,7 @@ function WorkspaceSection({
               onRestore={onRestore}
               onAssign={onAssign}
               onRenameSession={onRenameSession}
+              onDeleteSession={onDeleteSession}
             />
           ))}
         </div>
@@ -327,6 +346,7 @@ function SessionCard({
   onRestore,
   onAssign,
   onRenameSession,
+  onDeleteSession,
 }: {
   session: Session;
   workspaces: Workspace[];
@@ -336,6 +356,7 @@ function SessionCard({
   onRestore: (id: number) => void;
   onAssign: (sessionId: number, workspaceId: number) => void;
   onRenameSession: (session: Session) => void;
+  onDeleteSession: (session: Session) => void;
 }) {
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
@@ -381,6 +402,13 @@ function SessionCard({
             className="text-xs px-3 py-1.5 rounded-lg bg-teal-500 text-zinc-950 font-medium hover:bg-teal-400 transition-colors"
           >
             Restore
+          </button>
+          <button
+            onClick={() => onDeleteSession(session)}
+            aria-label="Delete session"
+            className="text-xs px-2.5 py-1.5 rounded-lg text-zinc-600 hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
+          >
+            🗑
           </button>
         </div>
       </div>
