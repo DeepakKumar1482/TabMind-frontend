@@ -14,3 +14,7 @@ export async function getOrCreateDefaultWorkspace(): Promise<number> {
   if (existing?.id) return existing.id;
   return createWorkspace({ name: "Unsorted", icon: "\u{1F5C2}️", createdAt: Date.now() });
 }
+
+export async function updateWorkspace(id: number, changes: Partial<Omit<Workspace, "id">>): Promise<void> {
+  await db.workspaces.update(id, changes);
+}

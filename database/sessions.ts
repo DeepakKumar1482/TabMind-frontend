@@ -17,3 +17,7 @@ export async function deleteSession(id: number): Promise<void> {
   await db.pages.where("sessionId").equals(id).delete();
   await db.sessions.delete(id);
 }
+
+export async function updateSession(id: number, changes: Partial<Omit<Session, "id">>): Promise<void> {
+  await db.sessions.update(id, changes);
+}
