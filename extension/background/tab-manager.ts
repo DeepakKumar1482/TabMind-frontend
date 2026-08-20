@@ -4,7 +4,7 @@ import { getOrCreateDefaultWorkspace } from "../../database/workspaces";
 import { DEFAULT_PROTECTED_PATTERNS, isProtectedUrl } from "../../shared/constants/protected-domains";
 import { extractPageContent } from "../content/extractor";
 import type { Page } from "../../shared/types";
-import type { PanicCaptureResult } from "./message-handler";
+import type { PanicCaptureResult, SaveSessionResult } from "./message-handler";
 
 async function getProtectedPatterns(): Promise<string[]> {
   const stored = await chrome.storage.local.get("protectedPatterns");
@@ -24,7 +24,15 @@ async function extractTabContent(tabId: number): Promise<string> {
   }
 }
 
-export async function panicCapture(): Promise<PanicCaptureResult> {
+// Shared by panicCapture() (closes tabs after) and saveCurrentSession()
+// (leaves them open) — both just write a Session + Page[] from the current
+// window's tabs.
+async function captureCurrentWindow(sessionName: string): Promise<{
+  sessionId: number;
+  captured: number;
+  skippedProtected: number;
+  capturedTabIds: number[];
+}> {
   const patterns = await getProtectedPatterns();
   const tabs = await chrome.tabs.query({ currentWindow: true });
 
@@ -42,7 +50,7 @@ export async function panicCapture(): Promise<PanicCaptureResult> {
   const workspaceId = await getOrCreateDefaultWorkspace();
   const sessionId = await createSession({
     workspaceId,
-    name: `Session ${new Date().toLocaleString()}`,
+    name: sessionName,
     createdAt: Date.now(),
     tabCount: capturable.length,
   });
@@ -64,15 +72,29 @@ export async function panicCapture(): Promise<PanicCaptureResult> {
   }
   await addPages(pages);
 
-  const tabIdsToClose = capturable.map((t) => t.id);
-  if (tabIdsToClose.length) {
-    await chrome.tabs.remove(tabIdsToClose);
+  return { sessionId, captured: pages.length, skippedProtected, capturedTabIds: capturable.map((t) => t.id) };
+}
+
+export async function panicCapture(): Promise<PanicCaptureResult> {
+  const { sessionId, captured, skippedProtected, capturedTabIds } = await captureCurrentWindow(
+    `Session ${new Date().toLocaleString()}`
+  );
+
+  if (capturedTabIds.length) {
+    await chrome.tabs.remove(capturedTabIds);
   }
 
   const dashboardUrl = chrome.runtime.getURL("dashboard/index.html");
   await chrome.tabs.create({ url: dashboardUrl });
 
-  return { sessionId, captured: pages.length, skippedProtected };
+  return { sessionId, captured, skippedProtected };
+}
+
+// "Save without closing" — same capture, tabs stay open. No dashboard
+// navigation either, since the point is to keep working uninterrupted.
+export async function saveCurrentSession(): Promise<SaveSessionResult> {
+  const { sessionId, captured, skippedProtected } = await captureCurrentWindow(`Saved ${new Date().toLocaleString()}`);
+  return { sessionId, captured, skippedProtected };
 }
 
 export async function restorePages(urls: string[]): Promise<void> {
