@@ -182,6 +182,7 @@ export default function SessionsPage() {
                 onDeleteSession={s.handleDeleteSession}
                 onDeletePage={s.handleDeletePage}
                 onSetPageGroup={s.handleSetPageGroup}
+                onTogglePin={s.handleTogglePin}
                 selectedPageIds={s.selectedPageIds}
                 onToggleSelectPage={s.toggleSelectPage}
                 onSelectAllPages={s.selectAllPages}
@@ -204,6 +205,7 @@ export default function SessionsPage() {
                 onDeleteSession={s.handleDeleteSession}
                 onDeletePage={s.handleDeletePage}
                 onSetPageGroup={s.handleSetPageGroup}
+                onTogglePin={s.handleTogglePin}
                 selectedPageIds={s.selectedPageIds}
                 onToggleSelectPage={s.toggleSelectPage}
                 onSelectAllPages={s.selectAllPages}

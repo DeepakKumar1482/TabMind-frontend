@@ -26,6 +26,7 @@ export interface Page {
   summary?: string;
   tags: string[];
   group?: string;
+  pinned?: boolean;
   embedding?: number[];
   readStatus: ReadStatus;
   note?: string;
