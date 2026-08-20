@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [pagesBySession, setPagesBySession] = useState<Record<number, Page[]>>({});
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [selectedPageIds, setSelectedPageIds] = useState<Set<number>>(new Set());
 
   const [aiStatus, setAiStatus] = useState<{ done: number; total: number } | null>(null);
 
@@ -60,6 +61,7 @@ export default function Dashboard() {
   }
 
   async function toggleSession(sessionId: number) {
+    setSelectedPageIds(new Set());
     if (expanded === sessionId) {
       setExpanded(null);
       return;
@@ -74,6 +76,26 @@ export default function Dashboard() {
   async function restoreSession(sessionId: number) {
     if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
     await chrome.runtime.sendMessage({ type: "RESTORE_SESSION", sessionId });
+  }
+
+  function toggleSelectPage(pageId: number) {
+    setSelectedPageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageId)) next.delete(pageId);
+      else next.add(pageId);
+      return next;
+    });
+  }
+
+  function selectAllPages(pageIds: number[]) {
+    setSelectedPageIds((prev) => (prev.size === pageIds.length ? new Set() : new Set(pageIds)));
+  }
+
+  async function restoreSelectedPages(sessionId: number) {
+    const pages = pagesBySession[sessionId] ?? [];
+    const urls = pages.filter((p) => selectedPageIds.has(p.id)).map((p) => p.url);
+    if (!urls.length || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+    await chrome.runtime.sendMessage({ type: "RESTORE_PAGES", urls });
   }
 
   async function runSearch(e: React.FormEvent) {
@@ -258,6 +280,10 @@ export default function Dashboard() {
                 onRenameSession={handleRenameSession}
                 onDeleteSession={handleDeleteSession}
                 onDeletePage={handleDeletePage}
+                selectedPageIds={selectedPageIds}
+                onToggleSelectPage={toggleSelectPage}
+                onSelectAllPages={selectAllPages}
+                onRestoreSelectedPages={restoreSelectedPages}
               />
             )}
             {grouped.byWorkspace.map(({ workspace, sessions: wsSessions }) => (
@@ -275,6 +301,10 @@ export default function Dashboard() {
                 onRenameSession={handleRenameSession}
                 onDeleteSession={handleDeleteSession}
                 onDeletePage={handleDeletePage}
+                selectedPageIds={selectedPageIds}
+                onToggleSelectPage={toggleSelectPage}
+                onSelectAllPages={selectAllPages}
+                onRestoreSelectedPages={restoreSelectedPages}
                 onRename={() => handleRenameWorkspace(workspace)}
               />
             ))}
@@ -298,6 +328,10 @@ function WorkspaceSection({
   onRenameSession,
   onDeleteSession,
   onDeletePage,
+  selectedPageIds,
+  onToggleSelectPage,
+  onSelectAllPages,
+  onRestoreSelectedPages,
   onRename,
 }: {
   icon: string;
@@ -312,6 +346,10 @@ function WorkspaceSection({
   onRenameSession: (session: Session) => void;
   onDeleteSession: (session: Session) => void;
   onDeletePage: (page: Page) => void;
+  selectedPageIds: Set<number>;
+  onToggleSelectPage: (pageId: number) => void;
+  onSelectAllPages: (pageIds: number[]) => void;
+  onRestoreSelectedPages: (sessionId: number) => void;
   onRename?: () => void;
 }) {
   return (
@@ -349,6 +387,10 @@ function WorkspaceSection({
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
               onDeletePage={onDeletePage}
+              selectedPageIds={selectedPageIds}
+              onToggleSelectPage={onToggleSelectPage}
+              onSelectAllPages={onSelectAllPages}
+              onRestoreSelectedPages={onRestoreSelectedPages}
             />
           ))}
         </div>
@@ -368,6 +410,10 @@ function SessionCard({
   onRenameSession,
   onDeleteSession,
   onDeletePage,
+  selectedPageIds,
+  onToggleSelectPage,
+  onSelectAllPages,
+  onRestoreSelectedPages,
 }: {
   session: Session;
   workspaces: Workspace[];
@@ -379,6 +425,10 @@ function SessionCard({
   onRenameSession: (session: Session) => void;
   onDeleteSession: (session: Session) => void;
   onDeletePage: (page: Page) => void;
+  selectedPageIds: Set<number>;
+  onToggleSelectPage: (pageId: number) => void;
+  onSelectAllPages: (pageIds: number[]) => void;
+  onRestoreSelectedPages: (sessionId: number) => void;
 }) {
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:border-zinc-700 transition-colors">
@@ -436,31 +486,58 @@ function SessionCard({
       </div>
 
       {isExpanded && (
-        <ul className="mt-4 flex flex-col gap-3 border-t border-zinc-800 pt-3.5">
-          {(pages ?? []).map((page) => (
-            <li key={page.id} className="flex gap-2.5 group">
-              <Favicon url={page.url} size={16} />
-              <div className="min-w-0 flex-1">
-                <a href={page.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-200 hover:underline truncate block">
-                  {page.title}
-                </a>
-                <p className="text-xs text-zinc-600 truncate">{hostname(page.url)}</p>
-                {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
-                <PageTags tags={page.tags} />
-              </div>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
-                <CopyUrlButton url={page.url} />
-                <button
-                  onClick={() => onDeletePage(page)}
-                  aria-label="Remove tab from session"
-                  className="text-xs text-zinc-700 hover:text-rose-400"
-                >
-                  ✕
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-4 border-t border-zinc-800 pt-3.5">
+          <div className="flex items-center gap-3 mb-2.5">
+            <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={(pages ?? []).length > 0 && selectedPageIds.size === (pages ?? []).length}
+                onChange={() => onSelectAllPages((pages ?? []).map((p) => p.id))}
+                className="accent-teal-500"
+              />
+              Select all
+            </label>
+            {selectedPageIds.size > 0 && (
+              <button
+                onClick={() => session.id && onRestoreSelectedPages(session.id)}
+                className="text-xs px-2.5 py-1 rounded-lg bg-teal-500 text-zinc-950 font-medium hover:bg-teal-400 transition-colors ml-auto"
+              >
+                Restore {selectedPageIds.size} selected
+              </button>
+            )}
+          </div>
+          <ul className="flex flex-col gap-3">
+            {(pages ?? []).map((page) => (
+              <li key={page.id} className="flex gap-2.5 group">
+                <input
+                  type="checkbox"
+                  checked={selectedPageIds.has(page.id)}
+                  onChange={() => onToggleSelectPage(page.id)}
+                  className="accent-teal-500 mt-1 shrink-0"
+                />
+                <Favicon url={page.url} size={16} />
+                <div className="min-w-0 flex-1">
+                  <a href={page.url} target="_blank" rel="noreferrer" className="text-sm text-zinc-200 hover:underline truncate block">
+                    {page.title}
+                  </a>
+                  <p className="text-xs text-zinc-600 truncate">{hostname(page.url)}</p>
+                  {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
+                  <PageTags tags={page.tags} />
+                </div>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
+                  <CopyUrlButton url={page.url} />
+                  <button
+                    onClick={() => onDeletePage(page)}
+                    aria-label="Remove tab from session"
+                    className="text-xs text-zinc-700 hover:text-rose-400"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
