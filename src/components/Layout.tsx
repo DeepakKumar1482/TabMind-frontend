@@ -70,6 +70,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     await chrome.runtime.sendMessage({ type: "PANIC_CAPTURE" });
   }
 
+  async function handleSaveSession() {
+    if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+    await chrome.runtime.sendMessage({ type: "SAVE_SESSION" });
+    await refreshCounts();
+  }
+
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!searchValue.trim()) return;
@@ -99,13 +105,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <div className="px-3 pt-4">
+        <div className="px-3 pt-4 flex flex-col gap-2">
           <button
             onClick={handleCollapseTabs}
             className="w-full text-sm px-3 py-2.5 rounded-lg bg-violet-500 text-white font-medium hover:bg-violet-400 transition-colors flex items-center justify-center gap-1.5"
           >
             <span aria-hidden>+</span>
             {!collapsed && "Collapse Tabs"}
+          </button>
+          <button
+            onClick={handleSaveSession}
+            title="Capture the current tabs as a session without closing them"
+            className="w-full text-sm px-3 py-2.5 rounded-lg border border-zinc-800 text-zinc-300 hover:bg-zinc-900 transition-colors flex items-center justify-center gap-1.5"
+          >
+            <span aria-hidden>⤓</span>
+            {!collapsed && "Save Current Session"}
           </button>
         </div>
 
