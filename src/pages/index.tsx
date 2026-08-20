@@ -227,6 +227,7 @@ export default function Dashboard() {
                         {page.title}
                       </a>
                       <span className="text-xs text-teal-400/80 shrink-0 font-mono tabular-nums">{(score * 100).toFixed(0)}%</span>
+                      <CopyUrlButton url={page.url} />
                     </div>
                     {page.summary && <p className="text-sm text-zinc-400 mt-1.5 ml-[26px]">{page.summary}</p>}
                     <PageTags tags={page.tags} />
@@ -447,18 +448,43 @@ function SessionCard({
                 {page.summary && <p className="text-xs text-zinc-500 mt-1">{page.summary}</p>}
                 <PageTags tags={page.tags} />
               </div>
-              <button
-                onClick={() => onDeletePage(page)}
-                aria-label="Remove tab from session"
-                className="text-xs text-zinc-700 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 self-start">
+                <CopyUrlButton url={page.url} />
+                <button
+                  onClick={() => onDeletePage(page)}
+                  aria-label="Remove tab from session"
+                  className="text-xs text-zinc-700 hover:text-rose-400"
+                >
+                  ✕
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+function CopyUrlButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      aria-label="Copy URL"
+      className={`text-xs px-1.5 shrink-0 transition-colors ${
+        copied ? "text-teal-400" : "text-zinc-700 hover:text-teal-300"
+      }`}
+    >
+      {copied ? "✓" : "⧉"}
+    </button>
   );
 }
 
