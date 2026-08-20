@@ -14,6 +14,7 @@ export interface Session {
   createdAt: number;
   tabCount: number;
   lastOpenedAt?: number;
+  deletedAt?: number;
 }
 
 export interface Page {
@@ -27,6 +28,7 @@ export interface Page {
   tags: string[];
   group?: string;
   pinned?: boolean;
+  deletedAt?: number;
   embedding?: number[];
   readStatus: ReadStatus;
   note?: string;
