@@ -25,6 +25,7 @@ export interface Page {
   content: string;
   summary?: string;
   tags: string[];
+  group?: string;
   embedding?: number[];
   readStatus: ReadStatus;
   note?: string;

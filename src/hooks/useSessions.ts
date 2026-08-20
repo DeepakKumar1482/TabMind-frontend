@@ -210,6 +210,15 @@ export function useSessions() {
     setSessions((prev) => prev.map((s) => (s.id === page.sessionId ? { ...s, tabCount: newTabCount } : s)));
   }
 
+  async function handleSetPageGroup(page: Page, group: string | undefined) {
+    await updatePage(page.id, { group });
+    setPagesBySession((prev) => {
+      const existing = prev[page.sessionId];
+      if (!existing) return prev;
+      return { ...prev, [page.sessionId]: existing.map((p) => (p.id === page.id ? { ...p, group } : p)) };
+    });
+  }
+
   const grouped = useMemo(() => {
     const byWorkspace = workspaces.map((ws) => ({
       workspace: ws,
@@ -249,5 +258,6 @@ export function useSessions() {
     handleRenameSession,
     handleDeleteSession,
     handleDeletePage,
+    handleSetPageGroup,
   };
 }
